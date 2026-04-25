@@ -170,8 +170,9 @@ MonoBehaviour:
   currentWater: 0
   requiredWaterForExit: 100
   firePoint: {fileID: 5151871255298511773}
-  projectilePrefab: {fileID: 7507557797760503916, guid: e247c356bc004084eba2ca1610287634,
+  waterProjectilePrefab: {fileID: 1663279447045661621, guid: 5b3a8c681827ab6408bea47c56c72ead,
     type: 3}
+  iceProjectilePrefab: {fileID: 0}
   waterCostPerShot: 0
   projectileSpeed: 40
   fireCooldown: 0.12
@@ -183,6 +184,12 @@ MonoBehaviour:
   interactionLayer:
     serializedVersion: 2
     m_Bits: 4294967295
+  plantingClickDistance: 150
+  plantCarryPoint: {fileID: 0}
+  carriedPlantLocalOffset: {x: 0.75, y: 0.15, z: 0.35}
+  carriedPlantLocalEuler: {x: 0, y: 0, z: 0}
+  carriedPlantLocalScale: {x: 0.6, y: 0.6, z: 0.6}
+  carriedPlantPrefabs: []
 --- !u!1 &1482782212586107652
 GameObject:
   m_ObjectHideFlags: 0

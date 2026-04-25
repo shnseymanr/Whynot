@@ -42,10 +42,10 @@ public class PlantingSpot : MonoBehaviour
             return false;
         }
 
-        PlantInventoryEntry entry = FindPlantToUse();
+        PlantInventoryEntry entry = FindPlantToUse(GameManager.Instance.SelectedPlantId);
         if (entry == null)
         {
-            WorldController.SetQuestText("Ekmek icin uygun bitki yok.");
+            WorldController.SetQuestText(GameManager.Instance.HasSelectedPlant ? "Bu tarlaya secili bitki ekilemiyor." : "Once envanterden bitki sec.");
             return false;
         }
 
@@ -56,29 +56,42 @@ public class PlantingSpot : MonoBehaviour
 
         planted = true;
         ShowPlantedVisual();
+        GameManager.Instance.ClearSelectedPlant();
         WorldController.SetQuestText($"{entry.displayName} ekildi.");
         return true;
     }
 
-    private PlantInventoryEntry FindPlantToUse()
+    private void OnMouseDown()
     {
-        if (acceptAnyPlant)
+        TryPlant();
+    }
+
+    private PlantInventoryEntry FindPlantToUse(string selectedPlantId)
+    {
+        selectedPlantId = NormalizePlantId(selectedPlantId);
+        if (!string.IsNullOrEmpty(selectedPlantId))
         {
             foreach (PlantInventoryEntry entry in GameManager.Instance.PlantInventory)
             {
-                if (entry != null && entry.count > 0)
+                if (entry == null || entry.count <= 0 || entry.plantId != selectedPlantId)
                 {
-                    return entry;
+                    continue;
                 }
+
+                return entry;
             }
 
             return null;
         }
 
-        string wantedId = NormalizePlantId(acceptedPlantId);
+        if (!acceptAnyPlant)
+        {
+            return null;
+        }
+
         foreach (PlantInventoryEntry entry in GameManager.Instance.PlantInventory)
         {
-            if (entry != null && entry.count > 0 && entry.plantId == wantedId)
+            if (entry != null && entry.count > 0)
             {
                 return entry;
             }

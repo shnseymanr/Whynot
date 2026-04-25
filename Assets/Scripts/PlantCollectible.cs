@@ -49,4 +49,12 @@ public class PlantCollectible : MonoBehaviour
 
         return true;
     }
+
+    private void OnTriggerEnter(Collider other)
+    {
+        if (other.GetComponentInParent<PlayerController>() != null)
+        {
+            Collect();
+        }
+    }
 }

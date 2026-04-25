@@ -39,6 +39,7 @@ public class GameManager : MonoBehaviour
     [SerializeField] private VillageStage villageStage = VillageStage.Dry;
     [SerializeField] private bool returnedFromCaveWithWater;
     [SerializeField] private List<PlantInventoryEntry> plantInventory = new List<PlantInventoryEntry>();
+    [SerializeField] private string selectedPlantId;
 
     public float MaxHealth => maxHealth;
     public float CurrentHealth => currentHealth;
@@ -48,6 +49,9 @@ public class GameManager : MonoBehaviour
     public VillageStage CurrentVillageStage => villageStage;
     public bool CanUseCaveExit => currentWater >= requiredWaterToExit;
     public IReadOnlyList<PlantInventoryEntry> PlantInventory => plantInventory;
+    public string SelectedPlantId => selectedPlantId;
+    public bool HasSelectedPlant => !string.IsNullOrEmpty(selectedPlantId);
+    public bool IsInVillage => SceneManager.GetActiveScene().name == villageSceneName;
 
     private void Awake()
     {
@@ -60,6 +64,24 @@ public class GameManager : MonoBehaviour
         Instance = this;
         DontDestroyOnLoad(gameObject);
         SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void EnsureInstanceBeforeSceneLoad()
+    {
+        if (Instance != null)
+        {
+            return;
+        }
+
+        GameManager existing = FindFirstObjectByType<GameManager>();
+        if (existing != null)
+        {
+            Instance = existing;
+            return;
+        }
+
+        new GameObject("GameManager", typeof(GameManager));
     }
 
     private void OnDestroy()
@@ -159,10 +181,44 @@ public class GameManager : MonoBehaviour
         if (entry.count <= 0)
         {
             plantInventory.Remove(entry);
+            if (selectedPlantId == plantId)
+            {
+                selectedPlantId = string.Empty;
+            }
         }
 
         WorldController.RefreshHud();
         return true;
+    }
+
+    public bool SelectPlantForPlanting(string plantId)
+    {
+        plantId = NormalizePlantId(plantId);
+        PlantInventoryEntry entry = FindPlantEntry(plantId);
+        if (entry == null || entry.count <= 0)
+        {
+            selectedPlantId = string.Empty;
+            WorldController.RefreshHud();
+            WorldController.SetQuestText("Bu bitkiden envanterde yok.");
+            return false;
+        }
+
+        selectedPlantId = plantId;
+        WorldController.RefreshHud();
+        WorldController.SetQuestText($"Bitki alindi: {entry.displayName}. Tarlaya tikla.");
+        return true;
+    }
+
+    public void ClearSelectedPlant()
+    {
+        selectedPlantId = string.Empty;
+        WorldController.RefreshHud();
+    }
+
+    public string GetSelectedPlantDisplayName()
+    {
+        PlantInventoryEntry entry = FindPlantEntry(selectedPlantId);
+        return entry != null ? entry.displayName : string.Empty;
     }
 
     public int GetPlantCount(string plantId)

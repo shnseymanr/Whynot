@@ -193,3 +193,4 @@ MonoBehaviour:
   spawnInterval: 2
   maxAliveEnemies: 5
   spawnOnStart: 1
+  fallbackSpawnSpacing: 2

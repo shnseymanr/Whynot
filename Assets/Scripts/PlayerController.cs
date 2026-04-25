@@ -1,4 +1,13 @@
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
+
+[System.Serializable]
+public class PlantCarryPrefab
+{
+    public string plantId;
+    public GameObject prefab;
+}
 
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : MonoBehaviour
@@ -26,7 +35,8 @@ public class PlayerController : MonoBehaviour
 
     [Header("Shooting")]
     [SerializeField] private Transform firePoint;
-    [SerializeField] private WaterProjectile projectilePrefab;
+    [SerializeField] private WaterProjectile waterProjectilePrefab;
+    [SerializeField] private WaterProjectile iceProjectilePrefab;
     [SerializeField] private float waterCostPerShot = 0f;
     [SerializeField] private float projectileSpeed = 40f;
     [SerializeField] private float fireCooldown = 0.12f;
@@ -40,6 +50,14 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private KeyCode interactionKey = KeyCode.E;
     [SerializeField] private float interactionRadius = 1.6f;
     [SerializeField] private LayerMask interactionLayer = ~0;
+    [SerializeField] private float plantingClickDistance = 150f;
+
+    [Header("Plant Carry Preview")]
+    [SerializeField] private Transform plantCarryPoint;
+    [SerializeField] private Vector3 carriedPlantLocalOffset = new Vector3(0.75f, 0.15f, 0.35f);
+    [SerializeField] private Vector3 carriedPlantLocalEuler;
+    [SerializeField] private Vector3 carriedPlantLocalScale = Vector3.one * 0.6f;
+    [SerializeField] private List<PlantCarryPrefab> carriedPlantPrefabs = new List<PlantCarryPrefab>();
 
     private Rigidbody rb;
     private Vector3 moveInput;
@@ -48,6 +66,8 @@ public class PlayerController : MonoBehaviour
     private float nextFireTime;
     private float ultimateCharge;
     private int iceShotsRemaining;
+    private string shownCarriedPlantId;
+    private GameObject carriedPlantInstance;
 
     public float MaxHealth => maxHealth;
     public float CurrentHealth => currentHealth;
@@ -84,7 +104,15 @@ public class PlayerController : MonoBehaviour
             jumpRequested = true;
         }
 
-        if (Input.GetMouseButtonDown(0) || Input.GetKeyDown(KeyCode.LeftControl) || Input.GetKeyDown(KeyCode.RightControl))
+        if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+        {
+            if (!TryPlantAtMousePosition())
+            {
+                TryShoot();
+            }
+        }
+
+        if (Input.GetKeyDown(KeyCode.LeftControl) || Input.GetKeyDown(KeyCode.RightControl))
         {
             TryShoot();
         }
@@ -101,6 +129,7 @@ public class PlayerController : MonoBehaviour
 
         RechargeUltimate();
         UpdateAimDirection();
+        UpdateCarriedPlantVisual();
 
         if (aimWithMouse && aimDirection.sqrMagnitude > 0.001f)
         {
@@ -211,6 +240,9 @@ public class PlayerController : MonoBehaviour
 
     private void TryShoot()
     {
+        ProjectileElement shotElement = IsIceModeActive ? ProjectileElement.Ice : ProjectileElement.Water;
+        WaterProjectile projectilePrefab = GetProjectilePrefab(shotElement);
+
         if (Time.time < nextFireTime || projectilePrefab == null || firePoint == null)
         {
             return;
@@ -223,7 +255,6 @@ public class PlayerController : MonoBehaviour
 
         nextFireTime = Time.time + fireCooldown;
         Vector3 shotDirection = aimWithMouse && aimDirection.sqrMagnitude > 0.001f ? aimDirection : firePoint.forward;
-        ProjectileElement shotElement = IsIceModeActive ? ProjectileElement.Ice : ProjectileElement.Water;
         WaterProjectile projectile = Instantiate(projectilePrefab, firePoint.position, Quaternion.LookRotation(shotDirection, Vector3.up));
         projectile.Initialize(ProjectileOwner.Player, shotDirection, projectileSpeed, gameObject, shotElement);
 
@@ -355,6 +386,118 @@ public class PlayerController : MonoBehaviour
         {
             closestPlantingSpot.TryPlant();
         }
+    }
+
+    private WaterProjectile GetProjectilePrefab(ProjectileElement element)
+    {
+        if (element == ProjectileElement.Ice)
+        {
+            return iceProjectilePrefab;
+        }
+
+        return waterProjectilePrefab;
+    }
+
+    private bool TryPlantAtMousePosition()
+    {
+        if (GameManager.Instance == null || !GameManager.Instance.HasSelectedPlant || Camera.main == null)
+        {
+            return false;
+        }
+
+        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        if (!Physics.Raycast(ray, out RaycastHit hit, plantingClickDistance, interactionLayer, QueryTriggerInteraction.Collide))
+        {
+            return false;
+        }
+
+        PlantingSpot plantingSpot = hit.collider.GetComponentInParent<PlantingSpot>();
+        if (plantingSpot == null)
+        {
+            plantingSpot = hit.collider.GetComponentInChildren<PlantingSpot>();
+        }
+
+        return plantingSpot != null && plantingSpot.TryPlant();
+    }
+
+    private void UpdateCarriedPlantVisual()
+    {
+        GameManager gameManager = GameManager.Instance;
+        if (gameManager == null || !gameManager.HasSelectedPlant)
+        {
+            ClearCarriedPlantVisual();
+            return;
+        }
+
+        string selectedPlantId = NormalizePlantId(gameManager.SelectedPlantId);
+        if (carriedPlantInstance != null && shownCarriedPlantId == selectedPlantId)
+        {
+            return;
+        }
+
+        ClearCarriedPlantVisual();
+
+        GameObject prefab = GetCarriedPlantPrefab(selectedPlantId);
+        if (prefab == null)
+        {
+            return;
+        }
+
+        Transform parent = plantCarryPoint != null ? plantCarryPoint : transform;
+        carriedPlantInstance = Instantiate(prefab, parent);
+        carriedPlantInstance.SetActive(true);
+        carriedPlantInstance.transform.localPosition = plantCarryPoint != null ? Vector3.zero : carriedPlantLocalOffset;
+        carriedPlantInstance.transform.localRotation = plantCarryPoint != null ? Quaternion.identity : Quaternion.Euler(carriedPlantLocalEuler);
+        carriedPlantInstance.transform.localScale = carriedPlantLocalScale;
+        shownCarriedPlantId = selectedPlantId;
+        PrepareCarriedPlantVisual(carriedPlantInstance);
+    }
+
+    private GameObject GetCarriedPlantPrefab(string plantId)
+    {
+        foreach (PlantCarryPrefab entry in carriedPlantPrefabs)
+        {
+            if (entry != null && NormalizePlantId(entry.plantId) == plantId && entry.prefab != null)
+            {
+                return entry.prefab;
+            }
+        }
+
+        return null;
+    }
+
+    private void ClearCarriedPlantVisual()
+    {
+        shownCarriedPlantId = string.Empty;
+        if (carriedPlantInstance != null)
+        {
+            Destroy(carriedPlantInstance);
+            carriedPlantInstance = null;
+        }
+    }
+
+    private void PrepareCarriedPlantVisual(GameObject visual)
+    {
+        foreach (Collider visualCollider in visual.GetComponentsInChildren<Collider>())
+        {
+            visualCollider.enabled = false;
+        }
+
+        foreach (Rigidbody visualRigidbody in visual.GetComponentsInChildren<Rigidbody>())
+        {
+            visualRigidbody.isKinematic = true;
+            visualRigidbody.useGravity = false;
+        }
+    }
+
+    private string NormalizePlantId(string plantId)
+    {
+        return string.IsNullOrWhiteSpace(plantId) ? string.Empty : plantId.Trim().ToLowerInvariant();
+    }
+
+    private bool IsPointerOverUi()
+    {
+        return EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
     }
 
     private void OnDrawGizmosSelected()

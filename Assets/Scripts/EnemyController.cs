@@ -21,6 +21,9 @@ public class EnemyController : MonoBehaviour
     [SerializeField] private float projectileSpeed = 7f;
     [SerializeField] private Transform firePoint;
     [SerializeField] private WaterProjectile projectilePrefab;
+    [SerializeField] private bool moveTowardNegativeZ = true;
+    [SerializeField] private float shootOnlyWithinDistance = 35f;
+    [SerializeField] private bool useVisibleModelAsFireOrigin = true;
 
     [Header("Spawner")]
     [SerializeField] private EnemyController enemyPrefab;
@@ -28,6 +31,7 @@ public class EnemyController : MonoBehaviour
     [SerializeField] private float spawnInterval = 2f;
     [SerializeField] private int maxAliveEnemies = 5;
     [SerializeField] private bool spawnOnStart = true;
+    [SerializeField] private float fallbackSpawnSpacing = 2f;
 
     private readonly HashSet<EnemyController> aliveEnemies = new HashSet<EnemyController>();
     private Rigidbody rb;
@@ -37,21 +41,26 @@ public class EnemyController : MonoBehaviour
     private EnemyController ownerSpawner;
     private Coroutine spawnRoutine;
     private Vector3 moveForward;
-    private bool hasLockedChaseDirection;
+    private static EnemyController fallbackEnemyPrefab;
+    private bool hasBeenVisibleByCamera;
+    private Renderer visibleRenderer;
 
     public bool CanTakeDamage => role == EnemyRole.Enemy || role == EnemyRole.Boss;
+    public bool HasBeenVisibleByCamera => hasBeenVisibleByCamera;
 
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
         currentHealth = maxHealth;
-        moveForward = transform.forward;
+        CacheVisibleRenderer();
+        SetMoveDirection();
     }
 
     private void OnEnable()
     {
         if (role == EnemyRole.Spawner && spawnOnStart)
         {
+            AutoAssignSpawnerReferences();
             spawnRoutine = StartCoroutine(SpawnLoop());
         }
     }
@@ -92,30 +101,7 @@ public class EnemyController : MonoBehaviour
             return;
         }
 
-        if (player == null)
-        {
-            rb.velocity = new Vector3(moveForward.x * moveSpeed, rb.velocity.y, moveForward.z * moveSpeed);
-            return;
-        }
-
-        Vector3 direction = player.position - transform.position;
-        direction.y = 0f;
-
-        if (direction.sqrMagnitude < 0.001f)
-        {
-            rb.velocity = new Vector3(0f, rb.velocity.y, 0f);
-            return;
-        }
-
-        Vector3 moveDirection = direction.normalized;
-        if (!hasLockedChaseDirection || Vector3.Dot(moveDirection, moveForward) >= 0f)
-        {
-            moveForward = moveDirection;
-            hasLockedChaseDirection = true;
-            transform.rotation = Quaternion.LookRotation(moveForward, Vector3.up);
-        }
-
-        rb.velocity = new Vector3(moveForward.x * moveSpeed, rb.velocity.y, moveForward.z * moveSpeed);
+        rb.velocity = new Vector3(0f, rb.velocity.y, moveForward.z * moveSpeed);
     }
 
     public void TakeDamage(float amount)
@@ -137,20 +123,31 @@ public class EnemyController : MonoBehaviour
         ownerSpawner = spawner;
     }
 
+    public void MarkVisibleByCamera()
+    {
+        hasBeenVisibleByCamera = true;
+    }
+
     public void TrySpawn()
     {
-        if (role != EnemyRole.Spawner || enemyPrefab == null || spawnPoints == null || spawnPoints.Length == 0 || aliveEnemies.Count >= maxAliveEnemies)
+        if (role != EnemyRole.Spawner || aliveEnemies.Count >= maxAliveEnemies)
         {
             return;
         }
 
-        Transform spawnPoint = spawnPoints[Random.Range(0, spawnPoints.Length)];
-        if (spawnPoint == null)
+        AutoAssignSpawnerReferences();
+        if (enemyPrefab == null)
         {
             return;
         }
 
-        EnemyController enemy = Instantiate(enemyPrefab, spawnPoint.position, spawnPoint.rotation);
+        Transform spawnPoint = GetSpawnPoint();
+        Vector3 spawnPosition = spawnPoint != null ? spawnPoint.position : GetFallbackSpawnPosition();
+        Quaternion spawnRotation = spawnPoint != null ? spawnPoint.rotation : transform.rotation;
+        EnemyController enemy = Instantiate(enemyPrefab, spawnPosition, spawnRotation);
+        enemy.role = EnemyRole.Enemy;
+        enemy.moveTowardNegativeZ = moveTowardNegativeZ;
+        enemy.SetMoveDirection();
         enemy.SetSpawnerOwner(this);
         aliveEnemies.Add(enemy);
     }
@@ -160,8 +157,77 @@ public class EnemyController : MonoBehaviour
         while (enabled)
         {
             TrySpawn();
-            yield return new WaitForSeconds(spawnInterval);
+            yield return new WaitForSeconds(Mathf.Max(0.1f, spawnInterval));
         }
+    }
+
+    private void AutoAssignSpawnerReferences()
+    {
+        if (role != EnemyRole.Spawner)
+        {
+            return;
+        }
+
+        if (enemyPrefab == null)
+        {
+            enemyPrefab = fallbackEnemyPrefab != null ? fallbackEnemyPrefab : FindEnemyPrefabInScene();
+        }
+
+        if (spawnPoints == null || spawnPoints.Length == 0)
+        {
+            List<Transform> children = new List<Transform>();
+            foreach (Transform child in transform)
+            {
+                children.Add(child);
+            }
+
+            spawnPoints = children.ToArray();
+        }
+    }
+
+    private EnemyController FindEnemyPrefabInScene()
+    {
+        foreach (EnemyController enemy in FindObjectsByType<EnemyController>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (enemy != null && enemy != this && enemy.role == EnemyRole.Enemy)
+            {
+                fallbackEnemyPrefab = enemy;
+                return enemy;
+            }
+        }
+
+        return null;
+    }
+
+    private Transform GetSpawnPoint()
+    {
+        if (spawnPoints == null || spawnPoints.Length == 0)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < spawnPoints.Length; i++)
+        {
+            Transform spawnPoint = spawnPoints[Random.Range(0, spawnPoints.Length)];
+            if (spawnPoint != null)
+            {
+                return spawnPoint;
+            }
+        }
+
+        return null;
+    }
+
+    private Vector3 GetFallbackSpawnPosition()
+    {
+        int lane = aliveEnemies.Count % 3 - 1;
+        return transform.position + new Vector3(lane * fallbackSpawnSpacing, 0f, 0f);
+    }
+
+    private void SetMoveDirection()
+    {
+        moveForward = moveTowardNegativeZ ? Vector3.back : Vector3.forward;
+        transform.rotation = Quaternion.LookRotation(moveForward, Vector3.up);
     }
 
     private void ShootAtPlayer()
@@ -171,10 +237,25 @@ public class EnemyController : MonoBehaviour
             return;
         }
 
-        Vector3 spawnPosition = firePoint != null ? firePoint.position : transform.position;
+        Vector3 spawnPosition = GetProjectileSpawnPosition();
         Vector3 direction = (player.position - spawnPosition).normalized;
         WaterProjectile projectile = Instantiate(projectilePrefab, spawnPosition, Quaternion.identity);
         projectile.Initialize(ProjectileOwner.Enemy, direction, projectileSpeed, gameObject);
+    }
+
+    private Vector3 GetProjectileSpawnPosition()
+    {
+        if (useVisibleModelAsFireOrigin)
+        {
+            CacheVisibleRenderer();
+            if (visibleRenderer != null)
+            {
+                Bounds bounds = visibleRenderer.bounds;
+                return bounds.center + moveForward * Mathf.Max(0.2f, bounds.extents.z + 0.35f);
+            }
+        }
+
+        return firePoint != null ? firePoint.position : transform.position;
     }
 
     private bool CanSeePlayerAhead()
@@ -186,7 +267,35 @@ public class EnemyController : MonoBehaviour
 
         Vector3 direction = player.position - transform.position;
         direction.y = 0f;
-        return direction.sqrMagnitude > 0.001f && (!hasLockedChaseDirection || Vector3.Dot(direction.normalized, moveForward) >= 0f);
+        float sqrDistance = direction.sqrMagnitude;
+        return sqrDistance > 0.001f
+            && sqrDistance <= shootOnlyWithinDistance * shootOnlyWithinDistance
+            && Vector3.Dot(direction.normalized, moveForward) >= 0f;
+    }
+
+    private void CacheVisibleRenderer()
+    {
+        if (visibleRenderer != null)
+        {
+            return;
+        }
+
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+        float largestBounds = 0f;
+        foreach (Renderer candidate in renderers)
+        {
+            if (candidate == null || !candidate.enabled || !candidate.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            float size = candidate.bounds.size.sqrMagnitude;
+            if (size > largestBounds)
+            {
+                largestBounds = size;
+                visibleRenderer = candidate;
+            }
+        }
     }
 
     private void OnDestroy()

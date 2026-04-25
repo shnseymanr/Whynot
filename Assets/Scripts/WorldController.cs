@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 public enum WorldRole
@@ -18,20 +20,6 @@ public class WorldController : MonoBehaviour
 {
     [Header("Role")]
     [SerializeField] private WorldRole role = WorldRole.Hud;
-
-    [Header("HUD")]
-    [SerializeField] private Slider healthSlider;
-    [SerializeField] private Slider waterSlider;
-    [SerializeField] private TMP_Text questText;
-    [SerializeField] private TMP_Text villageStageText;
-    [SerializeField] private TMP_Text collectedWaterText;
-    [SerializeField] private TMP_Text activeTaskText;
-    [SerializeField] private TMP_Text plantInventoryText;
-    [SerializeField] private TMP_Text projectileModeText;
-    [SerializeField] private TMP_Text iceShotsText;
-    [SerializeField] private TMP_Text ultimateText;
-    [SerializeField] private Image ultimateFillImage;
-    private Image ultimateBackgroundImage;
 
     [Header("Village Progress")]
     [SerializeField] private GameObject dryField;
@@ -64,19 +52,45 @@ public class WorldController : MonoBehaviour
     [SerializeField] private float fadeDuration = 0.75f;
     [SerializeField] private bool startFadeClear = true;
 
+    [Header("HUD Manual Layout")]
+    [SerializeField] private bool rebuildHudOnAwake;
+    [SerializeField] private Image healthFillImage;
+    [SerializeField] private Image waterFillImage;
+    [SerializeField] private TMP_Text questText;
+    [SerializeField] private TMP_Text stageText;
+    [SerializeField] private TMP_Text waterCountText;
+    [SerializeField] private TMP_Text inventoryText;
+    [SerializeField] private TMP_Text modeText;
+    [SerializeField] private TMP_Text iceText;
+    [SerializeField] private TMP_Text ultimateText;
+    [SerializeField] private Image ultimateFillImage;
+
     private static WorldController hudController;
     private static Sprite circleSprite;
+    private static Sprite inventoryPanelSprite;
+
+    private readonly List<Button> inventorySlots = new List<Button>();
+
     private EnemyController spawnedBoss;
     private Vector3 followVelocity;
+    private bool hasCameraFollowBaseY;
+    private float cameraFollowBaseY;
 
     private void Awake()
     {
         if (role == WorldRole.Hud)
         {
             hudController = this;
+            EnsureEventSystem();
             EnsureScreenSpaceHud();
-            AutoAssignHud();
-            ArrangeHudLayout();
+            if (rebuildHudOnAwake)
+            {
+                BuildCleanHud();
+            }
+            else
+            {
+                TryBindExistingHud();
+            }
         }
 
         if (role == WorldRole.CameraCleanup && targetCamera == null)
@@ -91,25 +105,7 @@ public class WorldController : MonoBehaviour
 
         if (role == WorldRole.Fade)
         {
-            if (fadeImage == null)
-            {
-                GameObject found = GameObject.Find("Fade_Image");
-                fadeImage = found != null ? found.GetComponent<Image>() : null;
-            }
-
-            if (fadeImage != null && !fadeImage.gameObject.activeSelf)
-            {
-                fadeImage.gameObject.SetActive(true);
-            }
-
-            if (startFadeClear)
-            {
-                SetFadeAlpha(0f);
-                if (fadeImage != null)
-                {
-                    fadeImage.raycastTarget = false;
-                }
-            }
+            SetupFade();
         }
     }
 
@@ -204,17 +200,10 @@ public class WorldController : MonoBehaviour
             return;
         }
 
-        hudController.AutoAssignHud();
-        hudController.ArrangeHudLayout();
-
+        hudController.EnsureHudReady();
         if (hudController.questText != null)
         {
             hudController.questText.text = text;
-        }
-
-        if (hudController.activeTaskText != null)
-        {
-            hudController.activeTaskText.text = $"Aktif Gorev: {text}";
         }
     }
 
@@ -243,8 +232,7 @@ public class WorldController : MonoBehaviour
 
     private void RefreshHudInternal()
     {
-        AutoAssignHud();
-        ArrangeHudLayout();
+        EnsureHudReady();
 
         GameManager gameManager = GameManager.Instance;
         PlayerController player = FindFirstObjectByType<PlayerController>();
@@ -253,70 +241,582 @@ public class WorldController : MonoBehaviour
             return;
         }
 
-        if (healthSlider != null)
+        if (healthFillImage != null)
         {
-            healthSlider.maxValue = Mathf.Max(1f, gameManager.MaxHealth);
-            healthSlider.value = Mathf.Clamp(gameManager.CurrentHealth, 0f, healthSlider.maxValue);
+            healthFillImage.fillAmount = Mathf.Clamp01(gameManager.CurrentHealth / Mathf.Max(1f, gameManager.MaxHealth));
         }
 
-        if (waterSlider != null)
+        if (waterFillImage != null)
         {
-            waterSlider.maxValue = Mathf.Max(1f, gameManager.MaxWater);
-            waterSlider.value = Mathf.Clamp(gameManager.CurrentWater, 0f, waterSlider.maxValue);
+            waterFillImage.fillAmount = Mathf.Clamp01(gameManager.CurrentWater / Mathf.Max(1f, gameManager.MaxWater));
         }
 
         string quest = gameManager.GetQuestText();
-
         if (questText != null)
         {
             questText.text = quest;
         }
 
-        if (villageStageText != null)
+        if (stageText != null)
         {
-            villageStageText.text = $"Koy Asamasi: {(int)gameManager.CurrentVillageStage}";
+            stageText.text = $"Koy Asamasi: {(int)gameManager.CurrentVillageStage}";
         }
 
-        if (collectedWaterText != null)
+        if (waterCountText != null)
         {
-            collectedWaterText.text = $"Toplanan Su: {gameManager.CurrentWater:0}/{gameManager.MaxWater:0}";
+            waterCountText.text = $"Toplanan Su: {gameManager.CurrentWater:0}/{gameManager.MaxWater:0}";
         }
 
-        if (activeTaskText != null)
+        if (inventoryText != null)
         {
-            activeTaskText.text = $"Aktif Gorev: {quest}";
+            inventoryText.text = GetInventoryHudText(gameManager);
         }
+        RefreshInventorySlots(gameManager);
 
-        if (plantInventoryText != null)
+        if (player == null)
         {
-            plantInventoryText.text = gameManager.GetPlantInventoryText();
-        }
-
-        if (player != null)
-        {
-            if (projectileModeText != null)
+            if (modeText != null)
             {
-                projectileModeText.text = $"Mod: {player.ActiveProjectileMode}";
+                modeText.text = "Mod: -";
             }
 
-            if (iceShotsText != null)
+            if (iceText != null)
             {
-                iceShotsText.text = player.IsIceModeActive ? $"Buz Atis: {player.IceShotsRemaining}" : "Buz Atis: -";
+                iceText.text = "Buz Atis: -";
             }
 
             if (ultimateText != null)
             {
-                ultimateText.text = player.IsUltimateReady ? "V" : $"{Mathf.CeilToInt(player.UltimateCharge01 * 100f)}%";
+                ultimateText.text = "-";
             }
 
             if (ultimateFillImage != null)
             {
-                ultimateFillImage.fillAmount = player.UltimateCharge01;
-                ultimateFillImage.color = player.IsUltimateReady
-                    ? new Color(0.45f, 0.95f, 1f, 1f)
-                    : new Color(0.18f, 0.55f, 0.75f, 1f);
+                ultimateFillImage.fillAmount = 0f;
+            }
+            return;
+        }
+
+        if (modeText != null)
+        {
+            modeText.text = $"Mod: {player.ActiveProjectileMode}";
+        }
+
+        if (iceText != null)
+        {
+            iceText.text = player.IsIceModeActive ? $"Buz Atis: {player.IceShotsRemaining}" : "Buz Atis: -";
+        }
+
+        if (ultimateText != null)
+        {
+            ultimateText.text = player.IsUltimateReady ? "V" : $"{Mathf.CeilToInt(player.UltimateCharge01 * 100f)}%";
+        }
+
+        if (ultimateFillImage != null)
+        {
+            ultimateFillImage.fillAmount = player.UltimateCharge01;
+            ultimateFillImage.color = player.IsUltimateReady
+                ? new Color(0.42f, 0.94f, 1f, 1f)
+                : new Color(0.12f, 0.45f, 0.7f, 1f);
+        }
+    }
+
+    private void EnsureHudReady()
+    {
+        if (questText != null && healthFillImage != null && waterFillImage != null && inventorySlots.Count > 0)
+        {
+            return;
+        }
+
+        EnsureScreenSpaceHud();
+        TryBindExistingHud();
+
+        if (rebuildHudOnAwake && (questText == null || healthFillImage == null || waterFillImage == null || inventorySlots.Count == 0))
+        {
+            BuildCleanHud();
+        }
+    }
+
+    private void BuildCleanHud()
+    {
+        ClearOldHudChildren();
+        inventorySlots.Clear();
+
+        RectTransform root = GetComponent<RectTransform>();
+        if (root == null)
+        {
+            return;
+        }
+
+        Image panel = GetComponent<Image>();
+        if (panel != null)
+        {
+            panel.color = Color.clear;
+            panel.raycastTarget = false;
+        }
+
+        healthFillImage = CreateBar(root, "Can", Anchor.TopLeft, new Vector2(16f, -14f), new Color(0.9f, 0.16f, 0.14f, 1f));
+        waterFillImage = CreateBar(root, "Su", Anchor.TopRight, new Vector2(-16f, -14f), new Color(0.08f, 0.55f, 0.95f, 1f));
+
+        RectTransform questCard = CreatePanel(root, "HUD_Quest", Anchor.TopCenter, new Vector2(0f, -14f), new Vector2(500f, 82f), 0.72f);
+        questText = CreateText(questCard, "Quest_Text", Anchor.TopCenter, new Vector2(0f, -12f), new Vector2(450f, 28f), 20f, TextAlignmentOptions.Center, Color.white);
+        stageText = CreateText(questCard, "Stage_Text", Anchor.BottomLeft, new Vector2(14f, 9f), new Vector2(210f, 18f), 12f, TextAlignmentOptions.Left, new Color(0.75f, 0.82f, 0.88f, 1f));
+        waterCountText = CreateText(questCard, "WaterCount_Text", Anchor.BottomRight, new Vector2(-14f, 9f), new Vector2(210f, 18f), 12f, TextAlignmentOptions.Right, new Color(0.75f, 0.82f, 0.88f, 1f));
+
+        RectTransform inventory = CreatePanel(root, "HUD_Inventory", Anchor.TopLeft, new Vector2(0f, -94f), new Vector2(190f, 420f), 0.78f);
+        ApplyPanelSprite(inventory, GetInventoryPanelSprite());
+        inventoryText = CreateText(inventory, "Inventory_Text", Anchor.TopLeft, new Vector2(14f, -14f), new Vector2(160f, 58f), 13f, TextAlignmentOptions.TopLeft, new Color(0.84f, 1f, 0.82f, 1f));
+
+        RectTransform slotRoot = CreateEmptyRect(inventory, "Inventory_Slots", Anchor.TopLeft, new Vector2(12f, -86f), new Vector2(166f, 190f));
+        VerticalLayoutGroup layout = slotRoot.gameObject.AddComponent<VerticalLayoutGroup>();
+        layout.spacing = 8f;
+        layout.childAlignment = TextAnchor.UpperLeft;
+        layout.childControlWidth = true;
+        layout.childControlHeight = false;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = false;
+
+        for (int i = 0; i < 4; i++)
+        {
+            inventorySlots.Add(CreateInventorySlot(slotRoot, i));
+        }
+
+        RectTransform ultimate = CreatePanel(root, "HUD_Ultimate", Anchor.BottomRight, new Vector2(-24f, 24f), new Vector2(220f, 86f), 0.74f);
+        modeText = CreateText(ultimate, "Mode_Text", Anchor.LeftCenter, new Vector2(12f, 18f), new Vector2(132f, 22f), 14f, TextAlignmentOptions.Left, new Color(0.86f, 0.94f, 1f, 1f));
+        iceText = CreateText(ultimate, "Ice_Text", Anchor.LeftCenter, new Vector2(12f, -8f), new Vector2(132f, 22f), 13f, TextAlignmentOptions.Left, new Color(0.76f, 0.86f, 0.92f, 1f));
+
+        Image ultimateBackground = CreateCircleImage(ultimate, "Ultimate_Background", Anchor.RightCenter, new Vector2(-40f, 0f), new Vector2(64f, 64f), new Color(0.02f, 0.024f, 0.03f, 0.95f));
+        ultimateBackground.raycastTarget = false;
+        ultimateFillImage = CreateCircleImage(ultimate, "Ultimate_Fill", Anchor.RightCenter, new Vector2(-40f, 0f), new Vector2(64f, 64f), new Color(0.12f, 0.45f, 0.7f, 1f));
+        ultimateFillImage.type = Image.Type.Filled;
+        ultimateFillImage.fillMethod = Image.FillMethod.Radial360;
+        ultimateFillImage.fillOrigin = 2;
+        ultimateFillImage.fillClockwise = true;
+        ultimateText = CreateText(ultimate, "Ultimate_Text", Anchor.RightCenter, new Vector2(-40f, 0f), new Vector2(64f, 32f), 16f, TextAlignmentOptions.Center, Color.white);
+    }
+
+    private void TryBindExistingHud()
+    {
+        if (healthFillImage == null)
+        {
+            healthFillImage = FindImageUnder("HUD_Can", "Fill");
+        }
+
+        if (waterFillImage == null)
+        {
+            waterFillImage = FindImageUnder("HUD_Su", "Fill");
+        }
+
+        if (questText == null)
+        {
+            questText = FindText("Quest_Text");
+        }
+
+        if (stageText == null)
+        {
+            stageText = FindText("Stage_Text");
+        }
+
+        if (waterCountText == null)
+        {
+            waterCountText = FindText("WaterCount_Text");
+        }
+
+        if (inventoryText == null)
+        {
+            inventoryText = FindText("Inventory_Text");
+        }
+
+        if (modeText == null)
+        {
+            modeText = FindText("Mode_Text");
+        }
+
+        if (iceText == null)
+        {
+            iceText = FindText("Ice_Text");
+        }
+
+        if (ultimateText == null)
+        {
+            ultimateText = FindText("Ultimate_Text");
+        }
+
+        if (ultimateFillImage == null)
+        {
+            ultimateFillImage = FindImage("Ultimate_Fill");
+        }
+
+        if (inventorySlots.Count == 0)
+        {
+            BindInventorySlots();
+        }
+    }
+
+    private TMP_Text FindText(string objectName)
+    {
+        Transform target = FindChild(objectName);
+        return target != null ? target.GetComponent<TMP_Text>() : null;
+    }
+
+    private Image FindImage(string objectName)
+    {
+        Transform target = FindChild(objectName);
+        return target != null ? target.GetComponent<Image>() : null;
+    }
+
+    private Image FindImageUnder(string parentName, string imageName)
+    {
+        Transform parent = FindChild(parentName);
+        if (parent == null)
+        {
+            return null;
+        }
+
+        foreach (Image image in parent.GetComponentsInChildren<Image>(true))
+        {
+            if (image.name == imageName)
+            {
+                return image;
             }
         }
+
+        return null;
+    }
+
+    private Transform FindChild(string objectName)
+    {
+        foreach (Transform child in GetComponentsInChildren<Transform>(true))
+        {
+            if (child.name == objectName)
+            {
+                return child;
+            }
+        }
+
+        return null;
+    }
+
+    private void BindInventorySlots()
+    {
+        Transform inventory = FindChild("HUD_Inventory");
+        if (inventory == null)
+        {
+            inventory = transform;
+        }
+
+        List<Button> buttons = new List<Button>();
+        foreach (Button button in inventory.GetComponentsInChildren<Button>(true))
+        {
+            buttons.Add(button);
+        }
+
+        buttons.Sort((left, right) => left.transform.GetSiblingIndex().CompareTo(right.transform.GetSiblingIndex()));
+        inventorySlots.AddRange(buttons);
+    }
+
+    private void ClearOldHudChildren()
+    {
+        List<Transform> toDestroy = new List<Transform>();
+        foreach (Transform child in transform)
+        {
+            WorldController childController = child.GetComponent<WorldController>();
+            if (childController != null && childController.role == WorldRole.Fade)
+            {
+                continue;
+            }
+
+            toDestroy.Add(child);
+        }
+
+        foreach (Transform child in toDestroy)
+        {
+            child.gameObject.SetActive(false);
+            Destroy(child.gameObject);
+        }
+    }
+
+    private Image CreateBar(RectTransform parent, string labelText, Anchor anchor, Vector2 position, Color fillColor)
+    {
+        RectTransform card = CreatePanel(parent, $"HUD_{labelText}", anchor, position, new Vector2(300f, 58f), 0.78f);
+        TextAlignmentOptions alignment = anchor == Anchor.TopLeft ? TextAlignmentOptions.Left : TextAlignmentOptions.Right;
+        Anchor labelAnchor = anchor == Anchor.TopLeft ? Anchor.TopLeft : Anchor.TopRight;
+        Vector2 labelPosition = anchor == Anchor.TopLeft ? new Vector2(16f, -8f) : new Vector2(-16f, -8f);
+        CreateText(card, $"{labelText}_Label", labelAnchor, labelPosition, new Vector2(120f, 18f), 17f, alignment, Color.white).text = labelText;
+
+        RectTransform barRoot = CreateEmptyRect(card, $"{labelText}_Bar", Anchor.BottomLeft, new Vector2(18f, 12f), new Vector2(264f, 14f));
+        Image background = CreateImage(barRoot, "Background", Anchor.Stretch, Vector2.zero, Vector2.zero, new Color(0.02f, 0.024f, 0.03f, 0.95f));
+        background.raycastTarget = false;
+
+        Image fill = CreateImage(barRoot, "Fill", Anchor.Stretch, new Vector2(2f, 2f), new Vector2(-2f, -2f), fillColor);
+        fill.type = Image.Type.Filled;
+        fill.fillMethod = Image.FillMethod.Horizontal;
+        fill.fillOrigin = 0;
+        fill.fillAmount = 1f;
+        fill.raycastTarget = false;
+        return fill;
+    }
+
+    private RectTransform CreatePanel(RectTransform parent, string name, Anchor anchor, Vector2 position, Vector2 size, float alpha)
+    {
+        GameObject target = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        target.transform.SetParent(parent, false);
+        RectTransform rect = target.GetComponent<RectTransform>();
+        ApplyAnchor(rect, anchor, position, size);
+
+        Image image = target.GetComponent<Image>();
+        image.color = new Color(0.015f, 0.018f, 0.024f, alpha);
+        image.raycastTarget = false;
+        return rect;
+    }
+
+    private Button CreateInventorySlot(RectTransform parent, int index)
+    {
+        GameObject target = new GameObject($"PlantSlot_{index + 1}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
+        target.transform.SetParent(parent, false);
+
+        RectTransform rect = target.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(0f, 38f);
+
+        LayoutElement layout = target.GetComponent<LayoutElement>();
+        layout.minHeight = 38f;
+        layout.preferredHeight = 38f;
+
+        Image image = target.GetComponent<Image>();
+        image.color = new Color(0.07f, 0.14f, 0.12f, 0.94f);
+
+        Button button = target.GetComponent<Button>();
+        button.transition = Selectable.Transition.ColorTint;
+
+        TMP_Text label = CreateText(rect, "Label", Anchor.Stretch, new Vector2(10f, 0f), new Vector2(-20f, 0f), 13.5f, TextAlignmentOptions.MidlineLeft, new Color(0.84f, 0.96f, 0.86f, 1f));
+        label.raycastTarget = false;
+        target.SetActive(false);
+        return button;
+    }
+
+    private TMP_Text CreateText(RectTransform parent, string name, Anchor anchor, Vector2 position, Vector2 size, float fontSize, TextAlignmentOptions alignment, Color color)
+    {
+        GameObject target = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
+        target.transform.SetParent(parent, false);
+
+        RectTransform rect = target.GetComponent<RectTransform>();
+        ApplyAnchor(rect, anchor, position, size);
+
+        TMP_Text text = target.GetComponent<TMP_Text>();
+        text.fontSize = fontSize;
+        text.alignment = alignment;
+        text.color = color;
+        text.enableWordWrapping = true;
+        text.overflowMode = TextOverflowModes.Ellipsis;
+        text.raycastTarget = false;
+        return text;
+    }
+
+    private Image CreateImage(RectTransform parent, string name, Anchor anchor, Vector2 position, Vector2 size, Color color)
+    {
+        GameObject target = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        target.transform.SetParent(parent, false);
+        RectTransform rect = target.GetComponent<RectTransform>();
+        ApplyAnchor(rect, anchor, position, size);
+
+        Image image = target.GetComponent<Image>();
+        image.color = color;
+        return image;
+    }
+
+    private Image CreateCircleImage(RectTransform parent, string name, Anchor anchor, Vector2 position, Vector2 size, Color color)
+    {
+        Image image = CreateImage(parent, name, anchor, position, size, color);
+        image.sprite = GetCircleSprite();
+        return image;
+    }
+
+    private void ApplyPanelSprite(RectTransform panel, Sprite sprite)
+    {
+        if (panel == null || sprite == null)
+        {
+            return;
+        }
+
+        Image image = panel.GetComponent<Image>();
+        if (image == null)
+        {
+            return;
+        }
+
+        image.sprite = sprite;
+        image.type = Image.Type.Sliced;
+        image.preserveAspect = false;
+        image.color = Color.white;
+    }
+
+    private RectTransform CreateEmptyRect(RectTransform parent, string name, Anchor anchor, Vector2 position, Vector2 size)
+    {
+        GameObject target = new GameObject(name, typeof(RectTransform));
+        target.transform.SetParent(parent, false);
+        RectTransform rect = target.GetComponent<RectTransform>();
+        ApplyAnchor(rect, anchor, position, size);
+        return rect;
+    }
+
+    private void RefreshInventorySlots(GameManager gameManager)
+    {
+        List<PlantInventoryEntry> entries = GetVisiblePlantEntries(gameManager);
+        for (int i = 0; i < inventorySlots.Count; i++)
+        {
+            Button slot = inventorySlots[i];
+            bool hasEntry = i < entries.Count;
+            slot.gameObject.SetActive(hasEntry);
+            if (!hasEntry)
+            {
+                continue;
+            }
+
+            PlantInventoryEntry entry = entries[i];
+            string displayName = string.IsNullOrWhiteSpace(entry.displayName) ? entry.plantId : entry.displayName;
+            bool selected = entry.plantId == gameManager.SelectedPlantId;
+            SetButtonLabel(slot, $"{(selected ? "> " : string.Empty)}{displayName} x{entry.count}");
+            StyleInventorySlot(slot, selected);
+
+            string idToSelect = entry.plantId;
+            slot.onClick.RemoveAllListeners();
+            slot.onClick.AddListener(() => GameManager.Instance?.SelectPlantForPlanting(idToSelect));
+            slot.interactable = true;
+        }
+    }
+
+    private List<PlantInventoryEntry> GetVisiblePlantEntries(GameManager gameManager)
+    {
+        List<PlantInventoryEntry> entries = new List<PlantInventoryEntry>();
+        foreach (PlantInventoryEntry entry in gameManager.PlantInventory)
+        {
+            if (entry != null && entry.count > 0)
+            {
+                entries.Add(entry);
+            }
+        }
+
+        return entries;
+    }
+
+    private void SetButtonLabel(Button button, string label)
+    {
+        TMP_Text tmpText = button.GetComponentInChildren<TMP_Text>(true);
+        if (tmpText != null)
+        {
+            tmpText.text = label;
+            return;
+        }
+
+        Text legacyText = button.GetComponentInChildren<Text>(true);
+        if (legacyText != null)
+        {
+            legacyText.text = label;
+        }
+    }
+
+    private void StyleInventorySlot(Button button, bool selected)
+    {
+        Image image = button.GetComponent<Image>();
+        if (image != null)
+        {
+            image.color = selected
+                ? new Color(0.18f, 0.42f, 0.28f, 0.98f)
+                : new Color(0.07f, 0.14f, 0.12f, 0.94f);
+        }
+
+        TMP_Text tmpText = button.GetComponentInChildren<TMP_Text>(true);
+        if (tmpText != null)
+        {
+            tmpText.color = selected ? new Color(0.96f, 1f, 0.94f, 1f) : new Color(0.84f, 0.96f, 0.86f, 1f);
+        }
+    }
+
+    private string GetInventoryHudText(GameManager gameManager)
+    {
+        if (!gameManager.HasSelectedPlant)
+        {
+            return "ENVANTER";
+        }
+
+        return $"ENVANTER\nSecili: {gameManager.GetSelectedPlantDisplayName()}";
+    }
+
+    private enum Anchor
+    {
+        TopLeft,
+        TopCenter,
+        TopRight,
+        MiddleLeft,
+        BottomRight,
+        LeftCenter,
+        RightCenter,
+        BottomLeft,
+        BottomRightLocal,
+        TopStretch,
+        BottomStretch,
+        Stretch
+    }
+
+    private void ApplyAnchor(RectTransform rect, Anchor anchor, Vector2 position, Vector2 size)
+    {
+        switch (anchor)
+        {
+            case Anchor.TopLeft:
+                SetAnchor(rect, Vector2.up, Vector2.up, Vector2.up, position, size);
+                break;
+            case Anchor.TopCenter:
+                SetAnchor(rect, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), position, size);
+                break;
+            case Anchor.TopRight:
+                SetAnchor(rect, Vector2.one, Vector2.one, Vector2.one, position, size);
+                break;
+            case Anchor.MiddleLeft:
+                SetAnchor(rect, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), position, size);
+                break;
+            case Anchor.BottomRight:
+                SetAnchor(rect, new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f), position, size);
+                break;
+            case Anchor.LeftCenter:
+                SetAnchor(rect, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), position, size);
+                break;
+            case Anchor.RightCenter:
+                SetAnchor(rect, new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0.5f, 0.5f), position, size);
+                break;
+            case Anchor.BottomLeft:
+                SetAnchor(rect, Vector2.zero, Vector2.zero, Vector2.zero, position, size);
+                break;
+            case Anchor.BottomRightLocal:
+                SetAnchor(rect, Vector2.right, Vector2.right, Vector2.right, position, size);
+                break;
+            case Anchor.TopStretch:
+                SetStretch(rect, new Vector2(0f, 1f), Vector2.one, new Vector2(0f, 1f), position, size);
+                break;
+            case Anchor.BottomStretch:
+                SetStretch(rect, Vector2.zero, Vector2.right, Vector2.zero, position, size);
+                break;
+            case Anchor.Stretch:
+                SetStretch(rect, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), position, size);
+                break;
+        }
+    }
+
+    private void SetAnchor(RectTransform rect, Vector2 min, Vector2 max, Vector2 pivot, Vector2 position, Vector2 size)
+    {
+        rect.anchorMin = min;
+        rect.anchorMax = max;
+        rect.pivot = pivot;
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+    }
+
+    private void SetStretch(RectTransform rect, Vector2 min, Vector2 max, Vector2 pivot, Vector2 offsetMin, Vector2 offsetMax)
+    {
+        rect.anchorMin = min;
+        rect.anchorMax = max;
+        rect.pivot = pivot;
+        rect.offsetMin = offsetMin;
+        rect.offsetMax = offsetMax;
     }
 
     private void ApplyVillageStage(VillageStage stage)
@@ -372,9 +872,26 @@ public class WorldController : MonoBehaviour
             {
                 if (enemy.CanTakeDamage)
                 {
-                    DestroyIfOutside(enemy.transform);
+                    DestroyEnemyIfOutsideAfterSeen(enemy);
                 }
             }
+        }
+    }
+
+    private void DestroyEnemyIfOutsideAfterSeen(EnemyController enemy)
+    {
+        Vector3 viewport = targetCamera.WorldToViewportPoint(enemy.transform.position);
+        bool outside = viewport.z < 0f || viewport.x < -viewportPadding || viewport.x > 1f + viewportPadding || viewport.y < -viewportPadding || viewport.y > 1f + viewportPadding;
+
+        if (!outside)
+        {
+            enemy.MarkVisibleByCamera();
+            return;
+        }
+
+        if (enemy.HasBeenVisibleByCamera)
+        {
+            Destroy(enemy.gameObject);
         }
     }
 
@@ -397,7 +914,17 @@ public class WorldController : MonoBehaviour
             return;
         }
 
-        Vector3 targetPosition = followTarget.position + followOffset;
+        if (!hasCameraFollowBaseY)
+        {
+            cameraFollowBaseY = transform.position.y;
+            hasCameraFollowBaseY = true;
+        }
+
+        Vector3 targetPosition = new Vector3(
+            followTarget.position.x + followOffset.x,
+            cameraFollowBaseY,
+            followTarget.position.z + followOffset.z);
+
         transform.position = followSmoothTime <= 0f
             ? targetPosition
             : Vector3.SmoothDamp(transform.position, targetPosition, ref followVelocity, followSmoothTime);
@@ -405,6 +932,40 @@ public class WorldController : MonoBehaviour
         if (followOffset.sqrMagnitude > 0.001f)
         {
             transform.rotation = Quaternion.LookRotation(-followOffset.normalized, Vector3.up);
+        }
+    }
+
+    private void AutoAssignCameraFollowTarget()
+    {
+        if (followTarget != null)
+        {
+            return;
+        }
+
+        PlayerController player = FindFirstObjectByType<PlayerController>();
+        followTarget = player != null ? player.transform : null;
+    }
+
+    private void SetupFade()
+    {
+        if (fadeImage == null)
+        {
+            GameObject found = GameObject.Find("Fade_Image");
+            fadeImage = found != null ? found.GetComponent<Image>() : null;
+        }
+
+        if (fadeImage != null && !fadeImage.gameObject.activeSelf)
+        {
+            fadeImage.gameObject.SetActive(true);
+        }
+
+        if (startFadeClear)
+        {
+            SetFadeAlpha(0f);
+            if (fadeImage != null)
+            {
+                fadeImage.raycastTarget = false;
+            }
         }
     }
 
@@ -442,72 +1003,6 @@ public class WorldController : MonoBehaviour
         fadeImage.color = color;
     }
 
-    private void AutoAssignHud()
-    {
-        EnsureHudCards();
-        healthSlider ??= FindComponentByName<Slider>("Health_Slider");
-        waterSlider ??= FindComponentByName<Slider>("Water_Slider");
-        questText ??= FindComponentByName<TMP_Text>("Quest_Text");
-        villageStageText ??= FindComponentByName<TMP_Text>("VillageStage_Text");
-        collectedWaterText ??= FindComponentByName<TMP_Text>("CollectedWater_Text");
-        activeTaskText ??= FindComponentByName<TMP_Text>("ActiveTask_Text");
-        plantInventoryText ??= FindComponentByName<TMP_Text>("PlantInventory_Text");
-        EnsureUltimateHud();
-    }
-
-    private void EnsureHudCards()
-    {
-        EnsureHudCard("HUD_HealthCard");
-        EnsureHudCard("HUD_QuestCard");
-        EnsureHudCard("HUD_WaterCard");
-        EnsureHudCard("HUD_StatusCard");
-        EnsureHudCard("HUD_PlantCard");
-    }
-
-    private void EnsureHudCard(string objectName)
-    {
-        Transform existing = transform.Find(objectName);
-        if (existing != null)
-        {
-            existing.SetAsFirstSibling();
-            return;
-        }
-
-        GameObject card = new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        card.transform.SetParent(transform, false);
-        card.transform.SetAsFirstSibling();
-    }
-
-    private void ArrangeHudLayout()
-    {
-        ConfigureRect("HUD_Panel", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, 0f), new Vector2(0f, 0f));
-
-        ConfigureRect("HUD_HealthCard", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(16f, -14f), new Vector2(350f, 64f));
-        ConfigureRect("HUD_QuestCard", new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -14f), new Vector2(460f, 64f));
-        ConfigureRect("HUD_WaterCard", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-16f, -14f), new Vector2(350f, 64f));
-        ConfigureRect("HUD_StatusCard", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 0f), Vector2.zero);
-        ConfigureRect("HUD_PlantCard", new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0f), new Vector2(220f, 420f));
-
-        ConfigureRect("Health_Label", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(34f, -22f), new Vector2(140f, 20f));
-        ConfigureRect("Health_Slider", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(34f, -46f), new Vector2(300f, 16f));
-
-        ConfigureRect("Water_Label", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-34f, -22f), new Vector2(140f, 20f));
-        ConfigureRect("Water_Slider", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-34f, -46f), new Vector2(300f, 16f));
-
-        ConfigureRect("Quest_Text", new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -22f), new Vector2(420f, 24f));
-        ConfigureRect("ActiveTask_Text", new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -46f), new Vector2(420f, 18f));
-
-        ConfigureRect("VillageStage_Text", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(34f, -82f), new Vector2(260f, 18f));
-        ConfigureRect("CollectedWater_Text", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-34f, -82f), new Vector2(280f, 18f));
-        ConfigureRect("PlantInventory_Text", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(14f, -16f), new Vector2(190f, 380f));
-        ConfigureRect("UltimateHUD_Group", new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(-28f, 28f), new Vector2(230f, 86f));
-        ConfigureRect("ProjectileMode_Text", new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 54f), new Vector2(140f, 22f));
-        ConfigureRect("IceShots_Text", new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 30f), new Vector2(140f, 22f));
-        ConfigureRect("Ultimate_Text", new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(0.5f, 0.5f), new Vector2(-38f, 38f), new Vector2(64f, 40f));
-
-        StyleHudControls();
-    }
-
     private void EnsureScreenSpaceHud()
     {
         Canvas canvas = GetComponent<Canvas>();
@@ -518,188 +1013,22 @@ public class WorldController : MonoBehaviour
 
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.worldCamera = null;
-        canvas.sortingOrder = Mathf.Max(canvas.sortingOrder, 10);
+        canvas.sortingOrder = Mathf.Max(canvas.sortingOrder, 50);
+
+        if (GetComponent<GraphicRaycaster>() == null)
+        {
+            gameObject.AddComponent<GraphicRaycaster>();
+        }
     }
 
-    private void ConfigureRect(string objectName, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, Vector2 position, Vector2 size)
+    private void EnsureEventSystem()
     {
-        GameObject found = GameObject.Find(objectName);
-        RectTransform rect = found != null ? found.GetComponent<RectTransform>() : null;
-        if (rect == null)
+        if (FindFirstObjectByType<EventSystem>() != null)
         {
             return;
         }
 
-        rect.anchorMin = anchorMin;
-        rect.anchorMax = anchorMax;
-        rect.pivot = pivot;
-        rect.anchoredPosition = position;
-        rect.sizeDelta = size;
-    }
-
-    private void StyleHudControls()
-    {
-        Image panelImage = FindComponentByName<Image>("HUD_Panel");
-        if (panelImage != null)
-        {
-            panelImage.color = new Color(0f, 0f, 0f, 0f);
-        }
-
-        StyleCard("HUD_HealthCard");
-        StyleCard("HUD_QuestCard");
-        StyleCard("HUD_WaterCard");
-        StyleCard("HUD_StatusCard", 0f);
-        StyleCard("HUD_PlantCard", 0.62f);
-
-        StyleSlider(healthSlider, new Color(0.9f, 0.18f, 0.16f, 1f));
-        StyleSlider(waterSlider, new Color(0.1f, 0.55f, 0.95f, 1f));
-
-        StyleText(questText, 22f, TextAlignmentOptions.Center, new Color(1f, 1f, 1f, 1f));
-        StyleText(activeTaskText, 15f, TextAlignmentOptions.Center, new Color(0.78f, 0.82f, 0.86f, 1f));
-        StyleText(villageStageText, 15f, TextAlignmentOptions.Left, new Color(0.78f, 0.82f, 0.86f, 1f));
-        StyleText(collectedWaterText, 15f, TextAlignmentOptions.Right, new Color(0.78f, 0.82f, 0.86f, 1f));
-        StyleText(plantInventoryText, 14f, TextAlignmentOptions.TopLeft, new Color(0.78f, 1f, 0.78f, 1f));
-
-        StyleText(FindComponentByName<TMP_Text>("Health_Label"), 18f, TextAlignmentOptions.Left, new Color(1f, 0.9f, 0.9f, 1f));
-        StyleText(FindComponentByName<TMP_Text>("Water_Label"), 18f, TextAlignmentOptions.Right, new Color(0.86f, 0.94f, 1f, 1f));
-        StyleText(projectileModeText, 16f, TextAlignmentOptions.Left, new Color(0.86f, 0.94f, 1f, 1f));
-        StyleText(iceShotsText, 14f, TextAlignmentOptions.Left, new Color(0.78f, 0.86f, 0.92f, 1f));
-        StyleText(ultimateText, 16f, TextAlignmentOptions.Center, Color.white);
-    }
-
-    private void StyleCard(string objectName, float alpha = 0.7f)
-    {
-        Image image = FindComponentByName<Image>(objectName);
-        if (image == null)
-        {
-            return;
-        }
-
-        image.color = new Color(0.015f, 0.018f, 0.024f, alpha);
-        image.raycastTarget = false;
-    }
-
-    private void StyleSlider(Slider slider, Color fillColor)
-    {
-        if (slider == null)
-        {
-            return;
-        }
-
-        Image background = slider.targetGraphic as Image;
-        if (background != null)
-        {
-            background.color = new Color(0.02f, 0.024f, 0.03f, 0.95f);
-        }
-
-        Image fill = slider.fillRect != null ? slider.fillRect.GetComponent<Image>() : null;
-        if (fill != null)
-        {
-            fill.color = fillColor;
-        }
-    }
-
-    private void StyleText(TMP_Text text, float fontSize, TextAlignmentOptions alignment, Color color)
-    {
-        if (text == null)
-        {
-            return;
-        }
-
-        text.fontSize = fontSize;
-        text.alignment = alignment;
-        text.color = color;
-        text.enableWordWrapping = text == plantInventoryText;
-        text.overflowMode = TextOverflowModes.Ellipsis;
-    }
-
-    private void AutoAssignCameraFollowTarget()
-    {
-        if (followTarget != null)
-        {
-            return;
-        }
-
-        PlayerController player = FindFirstObjectByType<PlayerController>();
-        followTarget = player != null ? player.transform : null;
-    }
-
-    private void EnsureUltimateHud()
-    {
-        Transform plantParent = transform.Find("HUD_PlantCard") ?? transform;
-        plantInventoryText ??= EnsureText(plantParent, "PlantInventory_Text");
-        if (plantInventoryText != null && plantInventoryText.transform.parent != plantParent)
-        {
-            plantInventoryText.transform.SetParent(plantParent, false);
-        }
-
-        if (projectileModeText != null && iceShotsText != null && ultimateText != null && ultimateFillImage != null)
-        {
-            return;
-        }
-
-        Transform root = transform.Find("UltimateHUD_Group");
-        if (root == null)
-        {
-            GameObject rootObject = new GameObject("UltimateHUD_Group", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            rootObject.transform.SetParent(transform, false);
-            root = rootObject.transform;
-        }
-
-        StyleCard("UltimateHUD_Group", 0.72f);
-        ultimateFillImage ??= EnsureImage(root, "Ultimate_Fill", new Color(0.18f, 0.55f, 0.75f, 1f), true);
-        ultimateBackgroundImage ??= EnsureImage(root, "Ultimate_Background", new Color(0.02f, 0.024f, 0.03f, 0.95f), false);
-        projectileModeText ??= EnsureText(root, "ProjectileMode_Text");
-        iceShotsText ??= EnsureText(root, "IceShots_Text");
-        ultimateText ??= EnsureText(root, "Ultimate_Text");
-
-        if (ultimateBackgroundImage != null)
-        {
-            ultimateBackgroundImage.transform.SetAsFirstSibling();
-        }
-
-        if (ultimateFillImage != null)
-        {
-            ultimateFillImage.transform.SetSiblingIndex(1);
-        }
-
-        if (ultimateText != null)
-        {
-            ultimateText.transform.SetAsLastSibling();
-        }
-    }
-
-    private Image EnsureImage(Transform parent, string objectName, Color color, bool filled)
-    {
-        Transform existing = parent.Find(objectName);
-        GameObject target = existing != null ? existing.gameObject : new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        target.transform.SetParent(parent, false);
-
-        RectTransform rect = target.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(1f, 0f);
-        rect.anchorMax = new Vector2(1f, 0f);
-        rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.anchoredPosition = new Vector2(-38f, 38f);
-        rect.sizeDelta = new Vector2(64f, 64f);
-
-        Image image = target.GetComponent<Image>();
-        image.sprite = GetCircleSprite();
-        image.color = color;
-        image.type = filled ? Image.Type.Filled : Image.Type.Simple;
-        image.fillMethod = Image.FillMethod.Radial360;
-        image.fillOrigin = 2;
-        image.fillClockwise = true;
-        image.fillAmount = filled ? 1f : 1f;
-        image.raycastTarget = false;
-        return image;
-    }
-
-    private TMP_Text EnsureText(Transform parent, string objectName)
-    {
-        Transform existing = parent.Find(objectName);
-        GameObject target = existing != null ? existing.gameObject : new GameObject(objectName, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
-        target.transform.SetParent(parent, false);
-        return target.GetComponent<TMP_Text>();
+        new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
     }
 
     private static Sprite GetCircleSprite()
@@ -729,6 +1058,23 @@ public class WorldController : MonoBehaviour
         return circleSprite;
     }
 
+    private static Sprite GetInventoryPanelSprite()
+    {
+        if (inventoryPanelSprite != null)
+        {
+            return inventoryPanelSprite;
+        }
+
+        Texture2D texture = Resources.Load<Texture2D>("UI/inventory_panel");
+        if (texture == null)
+        {
+            return null;
+        }
+
+        inventoryPanelSprite = Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(80f, 80f, 80f, 80f));
+        return inventoryPanelSprite;
+    }
+
     private static WorldController FindHudController()
     {
         foreach (WorldController controller in FindObjectsByType<WorldController>(FindObjectsSortMode.None))
@@ -740,12 +1086,6 @@ public class WorldController : MonoBehaviour
         }
 
         return null;
-    }
-
-    private T FindComponentByName<T>(string objectName) where T : Component
-    {
-        GameObject found = GameObject.Find(objectName);
-        return found != null ? found.GetComponent<T>() : null;
     }
 
     private void SetActive(GameObject target, bool active)

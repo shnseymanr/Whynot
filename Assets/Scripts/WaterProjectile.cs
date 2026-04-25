@@ -1,4 +1,5 @@
 using UnityEngine;
+using PixPlays.ElementalVFX;
 
 public enum ProjectileOwner
 {
@@ -22,6 +23,12 @@ public class WaterProjectile : MonoBehaviour
     [SerializeField] private float damage = 10f;
     [SerializeField] private float waterGainOnPlayerHit = 15f;
     [SerializeField] private float lifeTime = 4f;
+
+    [Header("Optional Asset VFX")]
+    [SerializeField] private bool playAttachedVfx = true;
+    [SerializeField] private float vfxTravelDistance = 18f;
+    [SerializeField] private float vfxDuration = 1.1f;
+    [SerializeField] private float vfxRadius = 1f;
 
     private Rigidbody rb;
     private GameObject source;
@@ -48,22 +55,30 @@ public class WaterProjectile : MonoBehaviour
         Vector3 shotDirection = direction.sqrMagnitude > 0.001f ? direction.normalized : Vector3.forward;
         rb.velocity = shotDirection * speed;
         transform.rotation = Quaternion.LookRotation(shotDirection, Vector3.up);
-        ApplyElementVisual();
+        PlayAssetVfx(shotDirection);
     }
 
-    private void ApplyElementVisual()
+    private void PlayAssetVfx(Vector3 shotDirection)
     {
-        Renderer projectileRenderer = GetComponentInChildren<Renderer>();
-        if (projectileRenderer == null)
+        if (!playAttachedVfx)
         {
             return;
         }
 
-        projectileRenderer.material.color = element == ProjectileElement.Ice
-            ? new Color(0.75f, 0.95f, 1f, 1f)
-            : new Color(0.05f, 0.35f, 1f, 1f);
+        BaseVfx vfx = GetComponent<BaseVfx>();
+        if (vfx == null)
+        {
+            vfx = GetComponentInChildren<BaseVfx>(true);
+        }
 
-        transform.localScale = element == ProjectileElement.Ice ? Vector3.one * 1.35f : Vector3.one * 0.9f;
+        if (vfx == null)
+        {
+            return;
+        }
+
+        vfx.gameObject.SetActive(true);
+        Vector3 target = transform.position + shotDirection.normalized * vfxTravelDistance;
+        vfx.Play(new VfxData(transform.position, target, vfxDuration, vfxRadius));
     }
 
     private void OnTriggerEnter(Collider other)
@@ -75,6 +90,22 @@ public class WaterProjectile : MonoBehaviour
 
         if (owner == ProjectileOwner.Player)
         {
+            if (element == ProjectileElement.Water)
+            {
+                water plant = other.GetComponentInParent<water>();
+                if (plant == null)
+                {
+                    plant = other.GetComponentInChildren<water>();
+                }
+
+                if (plant != null)
+                {
+                    plant.ApplyWater();
+                    Destroy(gameObject);
+                    return;
+                }
+            }
+
             EnemyController enemy = other.GetComponentInParent<EnemyController>();
             if (enemy != null && enemy.CanTakeDamage)
             {
