@@ -6,11 +6,18 @@ public enum ProjectileOwner
     Enemy
 }
 
+public enum ProjectileElement
+{
+    Water,
+    Ice
+}
+
 [RequireComponent(typeof(Collider))]
 [RequireComponent(typeof(Rigidbody))]
 public class WaterProjectile : MonoBehaviour
 {
     [SerializeField] private ProjectileOwner owner;
+    [SerializeField] private ProjectileElement element = ProjectileElement.Water;
     [SerializeField] private float speed = 10f;
     [SerializeField] private float damage = 10f;
     [SerializeField] private float waterGainOnPlayerHit = 15f;
@@ -31,15 +38,32 @@ public class WaterProjectile : MonoBehaviour
         Destroy(gameObject, lifeTime);
     }
 
-    public void Initialize(ProjectileOwner projectileOwner, Vector3 direction, float projectileSpeed, GameObject projectileSource)
+    public void Initialize(ProjectileOwner projectileOwner, Vector3 direction, float projectileSpeed, GameObject projectileSource, ProjectileElement projectileElement = ProjectileElement.Water)
     {
         owner = projectileOwner;
+        element = projectileElement;
         speed = projectileSpeed;
         source = projectileSource;
 
         Vector3 shotDirection = direction.sqrMagnitude > 0.001f ? direction.normalized : Vector3.forward;
         rb.velocity = shotDirection * speed;
         transform.rotation = Quaternion.LookRotation(shotDirection, Vector3.up);
+        ApplyElementVisual();
+    }
+
+    private void ApplyElementVisual()
+    {
+        Renderer projectileRenderer = GetComponentInChildren<Renderer>();
+        if (projectileRenderer == null)
+        {
+            return;
+        }
+
+        projectileRenderer.material.color = element == ProjectileElement.Ice
+            ? new Color(0.75f, 0.95f, 1f, 1f)
+            : new Color(0.05f, 0.35f, 1f, 1f);
+
+        transform.localScale = element == ProjectileElement.Ice ? Vector3.one * 1.35f : Vector3.one * 0.9f;
     }
 
     private void OnTriggerEnter(Collider other)

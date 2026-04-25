@@ -36,6 +36,8 @@ public class EnemyController : MonoBehaviour
     private float nextShootTime;
     private EnemyController ownerSpawner;
     private Coroutine spawnRoutine;
+    private Vector3 moveForward;
+    private bool hasLockedChaseDirection;
 
     public bool CanTakeDamage => role == EnemyRole.Enemy || role == EnemyRole.Boss;
 
@@ -43,6 +45,7 @@ public class EnemyController : MonoBehaviour
     {
         rb = GetComponent<Rigidbody>();
         currentHealth = maxHealth;
+        moveForward = transform.forward;
     }
 
     private void OnEnable()
@@ -75,7 +78,7 @@ public class EnemyController : MonoBehaviour
             return;
         }
 
-        if (Time.time >= nextShootTime)
+        if (Time.time >= nextShootTime && CanSeePlayerAhead())
         {
             ShootAtPlayer();
             nextShootTime = Time.time + shootInterval;
@@ -91,7 +94,7 @@ public class EnemyController : MonoBehaviour
 
         if (player == null)
         {
-            rb.velocity = -transform.forward * moveSpeed;
+            rb.velocity = new Vector3(moveForward.x * moveSpeed, rb.velocity.y, moveForward.z * moveSpeed);
             return;
         }
 
@@ -105,8 +108,14 @@ public class EnemyController : MonoBehaviour
         }
 
         Vector3 moveDirection = direction.normalized;
-        rb.velocity = new Vector3(moveDirection.x * moveSpeed, rb.velocity.y, moveDirection.z * moveSpeed);
-        transform.rotation = Quaternion.LookRotation(moveDirection, Vector3.up);
+        if (!hasLockedChaseDirection || Vector3.Dot(moveDirection, moveForward) >= 0f)
+        {
+            moveForward = moveDirection;
+            hasLockedChaseDirection = true;
+            transform.rotation = Quaternion.LookRotation(moveForward, Vector3.up);
+        }
+
+        rb.velocity = new Vector3(moveForward.x * moveSpeed, rb.velocity.y, moveForward.z * moveSpeed);
     }
 
     public void TakeDamage(float amount)
@@ -166,6 +175,18 @@ public class EnemyController : MonoBehaviour
         Vector3 direction = (player.position - spawnPosition).normalized;
         WaterProjectile projectile = Instantiate(projectilePrefab, spawnPosition, Quaternion.identity);
         projectile.Initialize(ProjectileOwner.Enemy, direction, projectileSpeed, gameObject);
+    }
+
+    private bool CanSeePlayerAhead()
+    {
+        if (player == null)
+        {
+            return false;
+        }
+
+        Vector3 direction = player.position - transform.position;
+        direction.y = 0f;
+        return direction.sqrMagnitude > 0.001f && (!hasLockedChaseDirection || Vector3.Dot(direction.normalized, moveForward) >= 0f);
     }
 
     private void OnDestroy()

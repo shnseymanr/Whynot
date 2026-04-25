@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -8,6 +10,14 @@ public enum VillageStage
     FieldWatered = 1,
     DamFilled = 2,
     Raided = 3
+}
+
+[System.Serializable]
+public class PlantInventoryEntry
+{
+    public string plantId;
+    public string displayName;
+    public int count;
 }
 
 public class GameManager : MonoBehaviour
@@ -28,6 +38,7 @@ public class GameManager : MonoBehaviour
     [Header("Progress")]
     [SerializeField] private VillageStage villageStage = VillageStage.Dry;
     [SerializeField] private bool returnedFromCaveWithWater;
+    [SerializeField] private List<PlantInventoryEntry> plantInventory = new List<PlantInventoryEntry>();
 
     public float MaxHealth => maxHealth;
     public float CurrentHealth => currentHealth;
@@ -36,6 +47,7 @@ public class GameManager : MonoBehaviour
     public float RequiredWaterToExit => requiredWaterToExit;
     public VillageStage CurrentVillageStage => villageStage;
     public bool CanUseCaveExit => currentWater >= requiredWaterToExit;
+    public IReadOnlyList<PlantInventoryEntry> PlantInventory => plantInventory;
 
     private void Awake()
     {
@@ -110,6 +122,89 @@ public class GameManager : MonoBehaviour
         StartCoroutine(LoadSceneRoutine(villageSceneName));
     }
 
+    public void AddPlant(string plantId, string displayName, int amount = 1)
+    {
+        plantId = NormalizePlantId(plantId);
+        if (string.IsNullOrEmpty(plantId) || amount <= 0)
+        {
+            return;
+        }
+
+        PlantInventoryEntry entry = FindPlantEntry(plantId);
+        if (entry == null)
+        {
+            entry = new PlantInventoryEntry
+            {
+                plantId = plantId,
+                displayName = string.IsNullOrWhiteSpace(displayName) ? plantId : displayName,
+                count = 0
+            };
+            plantInventory.Add(entry);
+        }
+
+        entry.count += amount;
+        WorldController.RefreshHud();
+    }
+
+    public bool TryConsumePlant(string plantId, int amount = 1)
+    {
+        plantId = NormalizePlantId(plantId);
+        PlantInventoryEntry entry = FindPlantEntry(plantId);
+        if (entry == null || entry.count < amount || amount <= 0)
+        {
+            return false;
+        }
+
+        entry.count -= amount;
+        if (entry.count <= 0)
+        {
+            plantInventory.Remove(entry);
+        }
+
+        WorldController.RefreshHud();
+        return true;
+    }
+
+    public int GetPlantCount(string plantId)
+    {
+        PlantInventoryEntry entry = FindPlantEntry(NormalizePlantId(plantId));
+        return entry != null ? entry.count : 0;
+    }
+
+    public string GetPlantInventoryText()
+    {
+        if (plantInventory.Count == 0)
+        {
+            return "Bitkiler: -";
+        }
+
+        StringBuilder builder = new StringBuilder("Bitkiler");
+        bool addedAny = false;
+
+        foreach (PlantInventoryEntry entry in plantInventory)
+        {
+            if (entry == null || entry.count <= 0)
+            {
+                continue;
+            }
+
+            builder.AppendLine();
+            builder.Append("- ");
+
+            builder.Append(string.IsNullOrWhiteSpace(entry.displayName) ? entry.plantId : entry.displayName);
+            if (entry.count > 1)
+            {
+                builder.Append(" (");
+                builder.Append(entry.count);
+                builder.Append(")");
+            }
+
+            addedAny = true;
+        }
+
+        return addedAny ? builder.ToString() : "Bitkiler: -";
+    }
+
     public string GetQuestText()
     {
         string activeScene = SceneManager.GetActiveScene().name;
@@ -162,12 +257,10 @@ public class GameManager : MonoBehaviour
         if (villageStage == VillageStage.Dry)
         {
             villageStage = VillageStage.FieldWatered;
-            currentWater = 0f;
         }
         else if (villageStage == VillageStage.FieldWatered)
         {
             villageStage = VillageStage.DamFilled;
-            currentWater = 0f;
             StartCoroutine(RaidAfterFadeRoutine());
         }
     }
@@ -191,6 +284,24 @@ public class GameManager : MonoBehaviour
         {
             yield return fade.FadeIn();
         }
+    }
+
+    private PlantInventoryEntry FindPlantEntry(string plantId)
+    {
+        foreach (PlantInventoryEntry entry in plantInventory)
+        {
+            if (entry != null && entry.plantId == plantId)
+            {
+                return entry;
+            }
+        }
+
+        return null;
+    }
+
+    private string NormalizePlantId(string plantId)
+    {
+        return string.IsNullOrWhiteSpace(plantId) ? string.Empty : plantId.Trim().ToLowerInvariant();
     }
 
     private IEnumerator RaidAfterFadeRoutine()
