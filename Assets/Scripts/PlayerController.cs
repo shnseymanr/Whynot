@@ -162,12 +162,18 @@ public class PlayerController : MonoBehaviour
         velocity.y = rb.velocity.y;
         rb.velocity = velocity;
 
-        if (jumpRequested && IsGrounded())
-        {
-            rb.velocity = new Vector3(rb.velocity.x, jumpForce, rb.velocity.z);
-        }
+// --- SES EKLEMESİ: Yürüme ---
+    bool isMoving = moveInput.sqrMagnitude > 0.01f && IsGrounded();
+    GameSoundManager.Instance.PlayWalk(isMoving);
 
-        jumpRequested = false;
+    if (jumpRequested && IsGrounded())
+    {
+        rb.velocity = new Vector3(rb.velocity.x, jumpForce, rb.velocity.z);
+        // --- SES EKLEMESİ: Zıplama ---
+        GameSoundManager.Instance.PlaySFX(GameSoundManager.Instance.jumpClip);
+    }
+
+    jumpRequested = false;
     }
 
     public void SetLimits(float newMaxHealth, float newMaxWater, bool refreshHud = true)
@@ -207,10 +213,15 @@ public class PlayerController : MonoBehaviour
         }
 
         currentHealth = Mathf.Max(0f, currentHealth - amount);
+if (currentHealth > 0f)
+    {
+        GameSoundManager.Instance.PlayDamageSFX();
+    }
         GameManager.Instance?.SavePlayer(this);
 
         if (currentHealth <= 0f)
         {
+            GameSoundManager.Instance.PlaySFX(GameSoundManager.Instance.deathClip);
             GameManager.Instance?.PlayerFailedCave();
         }
     }
@@ -264,6 +275,11 @@ public class PlayerController : MonoBehaviour
         }
 
         nextFireTime = Time.time + fireCooldown;
+        // --- SES EKLEMESİ: Ateş Etme ---
+    if (IsIceModeActive)
+        GameSoundManager.Instance.PlaySFX(GameSoundManager.Instance.ultimateShootClip);
+    else
+        GameSoundManager.Instance.PlaySFX(GameSoundManager.Instance.normalShootClip);
         Vector3 shotDirection = aimWithMouse && aimDirection.sqrMagnitude > 0.001f ? aimDirection : firePoint.forward;
         WaterProjectile projectile = Instantiate(projectilePrefab, firePoint.position, Quaternion.LookRotation(shotDirection, Vector3.up));
         projectile.Initialize(ProjectileOwner.Player, shotDirection, projectileSpeed, gameObject, shotElement);
@@ -455,12 +471,14 @@ public class PlayerController : MonoBehaviour
         if (closestPlant != null)
         {
             closestPlant.Collect();
+            GameSoundManager.Instance.PlaySFX(GameSoundManager.Instance.collectSeedClip);
             return;
         }
 
         if (closestPlantingSpot != null)
         {
             closestPlantingSpot.TryPlant();
+            GameSoundManager.Instance.PlaySFX(GameSoundManager.Instance.plantSeedClip);
         }
     }
 
