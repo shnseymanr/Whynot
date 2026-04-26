@@ -153,6 +153,10 @@ MonoBehaviour:
   damage: 10
   waterGainOnPlayerHit: 15
   lifeTime: 4
+  playAttachedVfx: 1
+  vfxTravelDistance: 18
+  vfxDuration: 1.1
+  vfxRadius: 1
 --- !u!1001 &111366254869620285
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -180,6 +184,21 @@ PrefabInstance:
         type: 3}
       propertyPath: m_IsActive
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7317352330088979879, guid: 5b3a8c681827ab6408bea47c56c72ead,
+        type: 3}
+      propertyPath: m_LocalScale.x
+      value: 4.6516
+      objectReference: {fileID: 0}
+    - target: {fileID: 7317352330088979879, guid: 5b3a8c681827ab6408bea47c56c72ead,
+        type: 3}
+      propertyPath: m_LocalScale.y
+      value: 4.6516
+      objectReference: {fileID: 0}
+    - target: {fileID: 7317352330088979879, guid: 5b3a8c681827ab6408bea47c56c72ead,
+        type: 3}
+      propertyPath: m_LocalScale.z
+      value: 4.6516
       objectReference: {fileID: 0}
     - target: {fileID: 7317352330088979879, guid: 5b3a8c681827ab6408bea47c56c72ead,
         type: 3}

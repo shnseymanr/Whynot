@@ -41,7 +41,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Transform firePoint;
     [SerializeField] private WaterProjectile waterProjectilePrefab;
     [SerializeField] private WaterProjectile iceProjectilePrefab;
-    [SerializeField] private float waterCostPerShot = 0f;
+    [SerializeField] private float waterCostPerShot = 5f;
     [SerializeField] private float projectileSpeed = 40f;
     [SerializeField] private float fireCooldown = 0.12f;
 
@@ -65,6 +65,7 @@ public class PlayerController : MonoBehaviour
 
     private Rigidbody rb;
     private Collider playerCollider;
+    private Animator visualAnimator;
     private Vector3 moveInput;
     private Vector3 aimDirection = Vector3.forward;
     private bool jumpRequested;
@@ -90,6 +91,13 @@ public class PlayerController : MonoBehaviour
     {
         rb = GetComponent<Rigidbody>();
         playerCollider = GetComponent<Collider>();
+        visualAnimator = GetComponentInChildren<Animator>();
+        if (visualAnimator != null)
+        {
+            visualAnimator.enabled = true;
+            visualAnimator.applyRootMotion = false;
+        }
+
         rb.constraints = ControlledRigidbodyConstraints;
         iceShotsRemaining = 0;
     }

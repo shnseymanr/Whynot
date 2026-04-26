@@ -130,6 +130,12 @@ public class GameManager : MonoBehaviour
         StartCoroutine(LoadSceneRoutine(caveSceneName));
     }
 
+    public void StartNewGame()
+    {
+        ResetRunState();
+        StartCoroutine(LoadSceneRoutine(villageSceneName));
+    }
+
     public void ReturnToVillage(PlayerController player)
     {
         SavePlayer(player);
@@ -213,6 +219,16 @@ public class GameManager : MonoBehaviour
     {
         selectedPlantId = string.Empty;
         WorldController.RefreshHud();
+    }
+
+    private void ResetRunState()
+    {
+        currentHealth = maxHealth;
+        currentWater = 0f;
+        villageStage = VillageStage.Dry;
+        returnedFromCaveWithWater = false;
+        selectedPlantId = string.Empty;
+        plantInventory.Clear();
     }
 
     public string GetSelectedPlantDisplayName()

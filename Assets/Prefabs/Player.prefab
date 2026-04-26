@@ -177,7 +177,7 @@ MonoBehaviour:
     type: 3}
   iceProjectilePrefab: {fileID: 7507557797760503916, guid: 65f5bfe3113029a4cac33fe5393a710b,
     type: 3}
-  waterCostPerShot: 0
+  waterCostPerShot: 5
   projectileSpeed: 40
   fireCooldown: 0.12
   ultimateKey: 118
@@ -667,6 +667,11 @@ PrefabInstance:
       propertyPath: m_Name
       value: Gamejam toprak (1)
       objectReference: {fileID: 0}
+    - target: {fileID: 8632055958874330854, guid: a69bd72bf61752d40838128fffd6b40a,
+        type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -5.25
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects:
     - {fileID: 7036213049465896255, guid: a69bd72bf61752d40838128fffd6b40a, type: 3}
@@ -702,7 +707,7 @@ Animator:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1236905802555387557}
   m_Enabled: 1
-  m_Avatar: {fileID: 0}
+  m_Avatar: {fileID: 9000000, guid: a69bd72bf61752d40838128fffd6b40a, type: 3}
   m_Controller: {fileID: 9100000, guid: 3029e497c8137ab49a231b564d4b0e8e, type: 2}
   m_CullingMode: 0
   m_UpdateMode: 0
