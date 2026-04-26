@@ -46,6 +46,8 @@ public class WorldController : MonoBehaviour
     [SerializeField] private Transform followTarget;
     [SerializeField] private Vector3 followOffset = new Vector3(0f, 7f, -10f);
     [SerializeField] private float followSmoothTime = 0.03f;
+    [SerializeField] private bool rotateCameraWithTarget = true;
+    [SerializeField] private bool rotateFollowOffsetWithTarget;
 
     [Header("Fade")]
     [SerializeField] private Image fadeImage;
@@ -56,6 +58,8 @@ public class WorldController : MonoBehaviour
     [SerializeField] private bool rebuildHudOnAwake;
     [SerializeField] private Image healthFillImage;
     [SerializeField] private Image waterFillImage;
+    [SerializeField] private Slider healthSlider;
+    [SerializeField] private Slider waterSlider;
     [SerializeField] private TMP_Text questText;
     [SerializeField] private TMP_Text stageText;
     [SerializeField] private TMP_Text waterCountText;
@@ -64,23 +68,41 @@ public class WorldController : MonoBehaviour
     [SerializeField] private TMP_Text iceText;
     [SerializeField] private TMP_Text ultimateText;
     [SerializeField] private Image ultimateFillImage;
+    [SerializeField] private float healthBarChangeSpeed = 0.55f;
+    [SerializeField] private float waterBarChangeSpeed = 1.8f;
 
     private static WorldController hudController;
     private static Sprite circleSprite;
     private static Sprite inventoryPanelSprite;
 
     private readonly List<Button> inventorySlots = new List<Button>();
+    private readonly List<Image> healthFillImages = new List<Image>();
+    private readonly List<Image> waterFillImages = new List<Image>();
+    private readonly List<Slider> healthSliders = new List<Slider>();
+    private readonly List<Slider> waterSliders = new List<Slider>();
 
     private EnemyController spawnedBoss;
     private Vector3 followVelocity;
     private bool hasCameraFollowBaseY;
     private float cameraFollowBaseY;
+    private Quaternion cameraFollowStartRotation;
+    private Vector3 cameraFollowStartEuler;
+    private Vector3 cameraFollowInitialOffset;
+    private float targetHealthFill = 1f;
+    private float targetWaterFill;
+    private float displayedHealthFill = -1f;
+    private float displayedWaterFill = -1f;
+    private bool isPersistentHud;
 
     private void Awake()
     {
         if (role == WorldRole.Hud)
         {
-            hudController = this;
+            if (!RegisterPersistentHud())
+            {
+                return;
+            }
+
             EnsureEventSystem();
             EnsureScreenSpaceHud();
             if (rebuildHudOnAwake)
@@ -100,7 +122,15 @@ public class WorldController : MonoBehaviour
 
         if (role == WorldRole.CameraFollow)
         {
+            rotateFollowOffsetWithTarget = false;
+            cameraFollowStartRotation = transform.rotation;
+            cameraFollowStartEuler = transform.eulerAngles;
             AutoAssignCameraFollowTarget();
+            if (followTarget != null)
+            {
+                cameraFollowInitialOffset = transform.position - followTarget.position;
+                followOffset = cameraFollowInitialOffset;
+            }
         }
 
         if (role == WorldRole.Fade)
@@ -120,6 +150,11 @@ public class WorldController : MonoBehaviour
         {
             CleanupOutsideCamera();
         }
+
+        if (role == WorldRole.Hud)
+        {
+            AnimateHudBars();
+        }
     }
 
     private void LateUpdate()
@@ -136,6 +171,26 @@ public class WorldController : MonoBehaviour
         {
             hudController = null;
         }
+    }
+
+    private bool RegisterPersistentHud()
+    {
+        if (hudController != null && hudController != this)
+        {
+            gameObject.SetActive(false);
+            Destroy(gameObject);
+            return false;
+        }
+
+        hudController = this;
+        if (!isPersistentHud)
+        {
+            transform.SetParent(null);
+            DontDestroyOnLoad(gameObject);
+            isPersistentHud = true;
+        }
+
+        return true;
     }
 
     private void OnTriggerEnter(Collider other)
@@ -241,14 +296,32 @@ public class WorldController : MonoBehaviour
             return;
         }
 
-        if (healthFillImage != null)
+        float currentHealth = player != null ? player.CurrentHealth : gameManager.CurrentHealth;
+        float maxHealth = player != null ? player.MaxHealth : gameManager.MaxHealth;
+        float currentWater = player != null ? player.CurrentWater : gameManager.CurrentWater;
+        float maxWater = player != null ? player.MaxWater : gameManager.MaxWater;
+
+        bool hasHealthBar = healthFillImage != null || healthSlider != null;
+        bool hasWaterBar = waterFillImage != null || waterSlider != null;
+
+        if (hasHealthBar)
         {
-            healthFillImage.fillAmount = Mathf.Clamp01(gameManager.CurrentHealth / Mathf.Max(1f, gameManager.MaxHealth));
+            targetHealthFill = Mathf.Clamp01(currentHealth / Mathf.Max(1f, maxHealth));
+            if (displayedHealthFill < 0f)
+            {
+                displayedHealthFill = targetHealthFill;
+                SetHudBarFill(healthFillImage, healthSlider, healthFillImages, healthSliders, displayedHealthFill);
+            }
         }
 
-        if (waterFillImage != null)
+        if (hasWaterBar)
         {
-            waterFillImage.fillAmount = Mathf.Clamp01(gameManager.CurrentWater / Mathf.Max(1f, gameManager.MaxWater));
+            targetWaterFill = Mathf.Clamp01(currentWater / Mathf.Max(1f, maxWater));
+            if (displayedWaterFill < 0f)
+            {
+                displayedWaterFill = targetWaterFill;
+                SetHudBarFill(waterFillImage, waterSlider, waterFillImages, waterSliders, displayedWaterFill);
+            }
         }
 
         string quest = gameManager.GetQuestText();
@@ -264,7 +337,7 @@ public class WorldController : MonoBehaviour
 
         if (waterCountText != null)
         {
-            waterCountText.text = $"Toplanan Su: {gameManager.CurrentWater:0}/{gameManager.MaxWater:0}";
+            waterCountText.text = $"Toplanan Su: {currentWater:0}/{maxWater:0}";
         }
 
         if (inventoryText != null)
@@ -321,17 +394,96 @@ public class WorldController : MonoBehaviour
         }
     }
 
-    private void EnsureHudReady()
+    private void AnimateHudBars()
     {
-        if (questText != null && healthFillImage != null && waterFillImage != null && inventorySlots.Count > 0)
+        if ((healthFillImage != null || healthSlider != null) && displayedHealthFill >= 0f)
+        {
+            displayedHealthFill = Mathf.MoveTowards(
+                displayedHealthFill,
+                targetHealthFill,
+                Mathf.Max(0.01f, healthBarChangeSpeed) * Time.deltaTime);
+            SetHudBarFill(healthFillImage, healthSlider, healthFillImages, healthSliders, displayedHealthFill);
+        }
+
+        if ((waterFillImage != null || waterSlider != null) && displayedWaterFill >= 0f)
+        {
+            displayedWaterFill = Mathf.MoveTowards(
+                displayedWaterFill,
+                targetWaterFill,
+                Mathf.Max(0.01f, waterBarChangeSpeed) * Time.deltaTime);
+            SetHudBarFill(waterFillImage, waterSlider, waterFillImages, waterSliders, displayedWaterFill);
+        }
+    }
+
+    private void SetHudBarFill(Image fillImage, Slider slider, List<Image> fillImages, List<Slider> sliders, float fillAmount)
+    {
+        fillAmount = Mathf.Clamp01(fillAmount);
+
+        SetSingleSliderFill(slider, fillAmount);
+        SetSingleImageFill(fillImage, fillAmount);
+
+        foreach (Slider candidateSlider in sliders)
+        {
+            SetSingleSliderFill(candidateSlider, fillAmount);
+        }
+
+        foreach (Image candidateImage in fillImages)
+        {
+            SetSingleImageFill(candidateImage, fillAmount);
+        }
+    }
+
+    private void SetSingleSliderFill(Slider slider, float fillAmount)
+    {
+        if (slider == null)
         {
             return;
         }
 
+        slider.SetValueWithoutNotify(Mathf.Lerp(slider.minValue, slider.maxValue, fillAmount));
+        SetFillRectWidth(slider.fillRect, fillAmount);
+    }
+
+    private void SetSingleImageFill(Image fillImage, float fillAmount)
+    {
+        if (fillImage == null)
+        {
+            return;
+        }
+
+        fillImage.fillAmount = fillAmount;
+        SetFillRectWidth(fillImage.rectTransform, fillAmount);
+    }
+
+    private void SetFillRectWidth(RectTransform fillRect, float fillAmount)
+    {
+        if (fillRect == null)
+        {
+            return;
+        }
+
+        fillAmount = Mathf.Clamp01(fillAmount);
+        fillRect.pivot = new Vector2(0f, fillRect.pivot.y);
+        fillRect.anchorMin = new Vector2(0f, fillRect.anchorMin.y);
+        fillRect.anchorMax = new Vector2(fillAmount, fillRect.anchorMax.y);
+        fillRect.offsetMin = new Vector2(0f, fillRect.offsetMin.y);
+        fillRect.offsetMax = new Vector2(0f, fillRect.offsetMax.y);
+        fillRect.localScale = new Vector3(1f, fillRect.localScale.y, fillRect.localScale.z);
+    }
+
+    private void EnsureHudReady()
+    {
         EnsureScreenSpaceHud();
         TryBindExistingHud();
 
-        if (rebuildHudOnAwake && (questText == null || healthFillImage == null || waterFillImage == null || inventorySlots.Count == 0))
+        bool hasHealthBar = healthFillImage != null || healthSlider != null;
+        bool hasWaterBar = waterFillImage != null || waterSlider != null;
+        if (questText != null && hasHealthBar && hasWaterBar && inventorySlots.Count > 0)
+        {
+            return;
+        }
+
+        if (rebuildHudOnAwake && (questText == null || !hasHealthBar || !hasWaterBar || inventorySlots.Count == 0))
         {
             BuildCleanHud();
         }
@@ -355,8 +507,8 @@ public class WorldController : MonoBehaviour
             panel.raycastTarget = false;
         }
 
-        healthFillImage = CreateBar(root, "Can", Anchor.TopLeft, new Vector2(16f, -14f), new Color(0.9f, 0.16f, 0.14f, 1f));
-        waterFillImage = CreateBar(root, "Su", Anchor.TopRight, new Vector2(-16f, -14f), new Color(0.08f, 0.55f, 0.95f, 1f));
+        healthFillImage = CreateBar(root, "Can", Anchor.TopLeft, new Vector2(16f, -14f), new Color(0.9f, 0.16f, 0.14f, 1f), 1f);
+        waterFillImage = CreateBar(root, "Su", Anchor.TopRight, new Vector2(-16f, -14f), new Color(0.08f, 0.55f, 0.95f, 1f), 0f);
 
         RectTransform questCard = CreatePanel(root, "HUD_Quest", Anchor.TopCenter, new Vector2(0f, -14f), new Vector2(500f, 82f), 0.72f);
         questText = CreateText(questCard, "Quest_Text", Anchor.TopCenter, new Vector2(0f, -12f), new Vector2(450f, 28f), 20f, TextAlignmentOptions.Center, Color.white);
@@ -397,15 +549,45 @@ public class WorldController : MonoBehaviour
 
     private void TryBindExistingHud()
     {
-        if (healthFillImage == null)
+        healthFillImages.Clear();
+        waterFillImages.Clear();
+        healthSliders.Clear();
+        waterSliders.Clear();
+
+        CollectImagesUnder("Health_Slider", "Fill", healthFillImages);
+        CollectImagesUnder("HUD_HealthCard", "Fill", healthFillImages);
+        CollectImagesUnder("HUD_Can", "Fill", healthFillImages);
+        CollectSliders("Health_Slider", healthSliders);
+
+        CollectImagesUnder("Water_Slider", "Fill", waterFillImages);
+        CollectImagesUnder("HUD_WaterCard", "Fill", waterFillImages);
+        CollectImagesUnder("HUD_Su", "Fill", waterFillImages);
+        CollectSliders("Water_Slider", waterSliders);
+
+        if (healthFillImages.Count > 0)
         {
-            healthFillImage = FindImageUnder("HUD_Can", "Fill");
+            healthFillImage = healthFillImages[0];
         }
 
-        if (waterFillImage == null)
+        if (healthSliders.Count > 0)
         {
-            waterFillImage = FindImageUnder("HUD_Su", "Fill");
+            healthSlider = healthSliders[0];
         }
+
+        if (waterFillImages.Count > 0)
+        {
+            waterFillImage = waterFillImages[0];
+        }
+
+        if (waterSliders.Count > 0)
+        {
+            waterSlider = waterSliders[0];
+        }
+
+        PrepareBarFillImage(healthFillImage, displayedHealthFill < 0f ? 1f : -1f);
+        PrepareBarFillImage(waterFillImage, displayedWaterFill < 0f ? 0f : -1f);
+        PrepareBarSlider(healthSlider, displayedHealthFill < 0f ? 1f : -1f);
+        PrepareBarSlider(waterSlider, displayedWaterFill < 0f ? 0f : -1f);
 
         if (questText == null)
         {
@@ -415,26 +597,46 @@ public class WorldController : MonoBehaviour
         if (stageText == null)
         {
             stageText = FindText("Stage_Text");
+            if (stageText == null)
+            {
+                stageText = FindText("VillageStage_Text");
+            }
         }
 
         if (waterCountText == null)
         {
             waterCountText = FindText("WaterCount_Text");
+            if (waterCountText == null)
+            {
+                waterCountText = FindText("CollectedWater_Text");
+            }
         }
 
         if (inventoryText == null)
         {
             inventoryText = FindText("Inventory_Text");
+            if (inventoryText == null)
+            {
+                inventoryText = FindText("PlantInventory_Text");
+            }
         }
 
         if (modeText == null)
         {
             modeText = FindText("Mode_Text");
+            if (modeText == null)
+            {
+                modeText = FindText("ProjectileMode_Text");
+            }
         }
 
         if (iceText == null)
         {
             iceText = FindText("Ice_Text");
+            if (iceText == null)
+            {
+                iceText = FindText("IceShots_Text");
+            }
         }
 
         if (ultimateText == null)
@@ -453,6 +655,43 @@ public class WorldController : MonoBehaviour
         }
     }
 
+    private void PrepareBarFillImage(Image fillImage, float initialFallback)
+    {
+        if (fillImage == null)
+        {
+            return;
+        }
+
+        fillImage.type = Image.Type.Filled;
+        fillImage.fillMethod = Image.FillMethod.Horizontal;
+        fillImage.fillOrigin = 0;
+        fillImage.fillClockwise = true;
+
+        if (initialFallback >= 0f && Mathf.Approximately(fillImage.fillAmount, 1f) && initialFallback <= 0f)
+        {
+            fillImage.fillAmount = initialFallback;
+        }
+    }
+
+    private void PrepareBarSlider(Slider slider, float initialFallback)
+    {
+        if (slider == null)
+        {
+            return;
+        }
+
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        slider.wholeNumbers = false;
+        slider.interactable = false;
+        slider.transition = Selectable.Transition.None;
+
+        if (initialFallback >= 0f && Mathf.Approximately(slider.normalizedValue, 1f) && initialFallback <= 0f)
+        {
+            slider.SetValueWithoutNotify(initialFallback);
+        }
+    }
+
     private TMP_Text FindText(string objectName)
     {
         Transform target = FindChild(objectName);
@@ -463,6 +702,48 @@ public class WorldController : MonoBehaviour
     {
         Transform target = FindChild(objectName);
         return target != null ? target.GetComponent<Image>() : null;
+    }
+
+    private Slider FindSlider(string objectName)
+    {
+        Transform target = FindChild(objectName);
+        return target != null ? target.GetComponent<Slider>() : null;
+    }
+
+    private void CollectImagesUnder(string parentName, string imageName, List<Image> results)
+    {
+        foreach (Transform candidateParent in GetComponentsInChildren<Transform>(true))
+        {
+            if (candidateParent.name != parentName)
+            {
+                continue;
+            }
+
+            foreach (Image image in candidateParent.GetComponentsInChildren<Image>(true))
+            {
+                if (image.name == imageName && !results.Contains(image))
+                {
+                    results.Add(image);
+                }
+            }
+        }
+    }
+
+    private void CollectSliders(string objectName, List<Slider> results)
+    {
+        foreach (Transform child in GetComponentsInChildren<Transform>(true))
+        {
+            if (child.name != objectName)
+            {
+                continue;
+            }
+
+            Slider slider = child.GetComponent<Slider>();
+            if (slider != null && !results.Contains(slider))
+            {
+                results.Add(slider);
+            }
+        }
     }
 
     private Image FindImageUnder(string parentName, string imageName)
@@ -536,7 +817,7 @@ public class WorldController : MonoBehaviour
         }
     }
 
-    private Image CreateBar(RectTransform parent, string labelText, Anchor anchor, Vector2 position, Color fillColor)
+    private Image CreateBar(RectTransform parent, string labelText, Anchor anchor, Vector2 position, Color fillColor, float initialFillAmount)
     {
         RectTransform card = CreatePanel(parent, $"HUD_{labelText}", anchor, position, new Vector2(300f, 58f), 0.78f);
         TextAlignmentOptions alignment = anchor == Anchor.TopLeft ? TextAlignmentOptions.Left : TextAlignmentOptions.Right;
@@ -552,7 +833,7 @@ public class WorldController : MonoBehaviour
         fill.type = Image.Type.Filled;
         fill.fillMethod = Image.FillMethod.Horizontal;
         fill.fillOrigin = 0;
-        fill.fillAmount = 1f;
+        fill.fillAmount = Mathf.Clamp01(initialFillAmount);
         fill.raycastTarget = false;
         return fill;
     }
@@ -914,24 +1195,39 @@ public class WorldController : MonoBehaviour
             return;
         }
 
+        if (transform.IsChildOf(followTarget))
+        {
+            return;
+        }
+
         if (!hasCameraFollowBaseY)
         {
-            cameraFollowBaseY = transform.position.y;
+            cameraFollowInitialOffset = transform.position - followTarget.position;
+            followOffset = cameraFollowInitialOffset;
+            cameraFollowBaseY = followTarget.position.y + cameraFollowInitialOffset.y;
             hasCameraFollowBaseY = true;
         }
 
+        Vector3 rotatedOffset = rotateFollowOffsetWithTarget
+            ? Quaternion.Euler(0f, followTarget.eulerAngles.y, 0f) * cameraFollowInitialOffset
+            : cameraFollowInitialOffset;
+
         Vector3 targetPosition = new Vector3(
-            followTarget.position.x + followOffset.x,
-            cameraFollowBaseY,
-            followTarget.position.z + followOffset.z);
+            followTarget.position.x + rotatedOffset.x,
+            followTarget.position.y + rotatedOffset.y,
+            followTarget.position.z + rotatedOffset.z);
 
         transform.position = followSmoothTime <= 0f
             ? targetPosition
             : Vector3.SmoothDamp(transform.position, targetPosition, ref followVelocity, followSmoothTime);
 
-        if (followOffset.sqrMagnitude > 0.001f)
+        if (rotateCameraWithTarget)
         {
-            transform.rotation = Quaternion.LookRotation(-followOffset.normalized, Vector3.up);
+            transform.rotation = Quaternion.Euler(cameraFollowStartEuler.x, followTarget.eulerAngles.y, cameraFollowStartEuler.z);
+        }
+        else
+        {
+            transform.rotation = cameraFollowStartRotation;
         }
     }
 

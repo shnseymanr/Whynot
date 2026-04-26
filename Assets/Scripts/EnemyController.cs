@@ -9,6 +9,12 @@ public enum EnemyRole
     Spawner
 }
 
+public enum EnemyMoveAxis
+{
+    X,
+    Z
+}
+
 public class EnemyController : MonoBehaviour
 {
     [Header("Role")]
@@ -21,6 +27,7 @@ public class EnemyController : MonoBehaviour
     [SerializeField] private float projectileSpeed = 7f;
     [SerializeField] private Transform firePoint;
     [SerializeField] private WaterProjectile projectilePrefab;
+    [SerializeField] private EnemyMoveAxis moveAxis = EnemyMoveAxis.X;
     [SerializeField] private bool moveTowardNegativeZ = true;
     [SerializeField] private float shootOnlyWithinDistance = 35f;
     [SerializeField] private bool useVisibleModelAsFireOrigin = true;
@@ -41,6 +48,7 @@ public class EnemyController : MonoBehaviour
     private EnemyController ownerSpawner;
     private Coroutine spawnRoutine;
     private Vector3 moveForward;
+    private int nextSpawnPointIndex;
     private static EnemyController fallbackEnemyPrefab;
     private bool hasBeenVisibleByCamera;
     private Renderer visibleRenderer;
@@ -101,7 +109,7 @@ public class EnemyController : MonoBehaviour
             return;
         }
 
-        rb.velocity = new Vector3(0f, rb.velocity.y, moveForward.z * moveSpeed);
+        rb.velocity = new Vector3(moveForward.x * moveSpeed, rb.velocity.y, moveForward.z * moveSpeed);
     }
 
     public void TakeDamage(float amount)
@@ -146,6 +154,7 @@ public class EnemyController : MonoBehaviour
         Quaternion spawnRotation = spawnPoint != null ? spawnPoint.rotation : transform.rotation;
         EnemyController enemy = Instantiate(enemyPrefab, spawnPosition, spawnRotation);
         enemy.role = EnemyRole.Enemy;
+        enemy.moveAxis = moveAxis;
         enemy.moveTowardNegativeZ = moveTowardNegativeZ;
         enemy.SetMoveDirection();
         enemy.SetSpawnerOwner(this);
@@ -208,7 +217,10 @@ public class EnemyController : MonoBehaviour
 
         for (int i = 0; i < spawnPoints.Length; i++)
         {
-            Transform spawnPoint = spawnPoints[Random.Range(0, spawnPoints.Length)];
+            int index = nextSpawnPointIndex % spawnPoints.Length;
+            nextSpawnPointIndex = (nextSpawnPointIndex + 1) % spawnPoints.Length;
+
+            Transform spawnPoint = spawnPoints[index];
             if (spawnPoint != null)
             {
                 return spawnPoint;
@@ -221,13 +233,28 @@ public class EnemyController : MonoBehaviour
     private Vector3 GetFallbackSpawnPosition()
     {
         int lane = aliveEnemies.Count % 3 - 1;
-        return transform.position + new Vector3(lane * fallbackSpawnSpacing, 0f, 0f);
+        Vector3 laneOffset = moveAxis == EnemyMoveAxis.X
+            ? new Vector3(0f, 0f, lane * fallbackSpawnSpacing)
+            : new Vector3(lane * fallbackSpawnSpacing, 0f, 0f);
+
+        return transform.position + laneOffset;
     }
 
     private void SetMoveDirection()
     {
-        moveForward = moveTowardNegativeZ ? Vector3.back : Vector3.forward;
-        transform.rotation = Quaternion.LookRotation(moveForward, Vector3.up);
+        if (moveAxis == EnemyMoveAxis.X)
+        {
+            moveForward = moveTowardNegativeZ ? Vector3.left : Vector3.right;
+        }
+        else
+        {
+            moveForward = moveTowardNegativeZ ? Vector3.back : Vector3.forward;
+        }
+
+        if (role != EnemyRole.Spawner)
+        {
+            transform.rotation = Quaternion.LookRotation(moveForward, Vector3.up);
+        }
     }
 
     private void ShootAtPlayer()
@@ -251,7 +278,11 @@ public class EnemyController : MonoBehaviour
             if (visibleRenderer != null)
             {
                 Bounds bounds = visibleRenderer.bounds;
-                return bounds.center + moveForward * Mathf.Max(0.2f, bounds.extents.z + 0.35f);
+                float forwardExtent = Mathf.Abs(moveForward.x) > Mathf.Abs(moveForward.z)
+                    ? bounds.extents.x
+                    : bounds.extents.z;
+
+                return bounds.center + moveForward * Mathf.Max(0.2f, forwardExtent + 0.35f);
             }
         }
 

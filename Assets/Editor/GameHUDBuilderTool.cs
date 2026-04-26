@@ -90,11 +90,11 @@ public static class GameHUDBuilderTool
         SetRect(ultimateGroup.GetComponent<RectTransform>(), new Vector2(-28f, 28f), new Vector2(230f, 86f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f));
 
         Transform healthLabel = EnsureTextObject("Health_Label", healthCard.transform, "Can", 18, TextAlignmentOptions.Left).transform;
-        Transform healthSlider = EnsureSliderObject("Health_Slider", healthCard.transform, new Color(0.9f, 0.18f, 0.16f)).transform;
+        Transform healthSlider = EnsureSliderObject("Health_Slider", healthCard.transform, new Color(0.9f, 0.18f, 0.16f), 100f).transform;
         Transform questText = EnsureTextObject("Quest_Text", questCard.transform, "Magaraya git ve su topla.", 22, TextAlignmentOptions.Center).transform;
         Transform activeTaskText = EnsureTextObject("ActiveTask_Text", questCard.transform, "Aktif Gorev: Magaraya git ve su topla.", 15, TextAlignmentOptions.Center).transform;
         Transform waterLabel = EnsureTextObject("Water_Label", waterCard.transform, "Su", 18, TextAlignmentOptions.Right).transform;
-        Transform waterSlider = EnsureSliderObject("Water_Slider", waterCard.transform, new Color(0.1f, 0.55f, 0.95f)).transform;
+        Transform waterSlider = EnsureSliderObject("Water_Slider", waterCard.transform, new Color(0.1f, 0.55f, 0.95f), 0f).transform;
         Transform stageText = EnsureTextObject("VillageStage_Text", healthCard.transform, "Koy Asamasi: 0", 13, TextAlignmentOptions.Left).transform;
         Transform collectedWaterText = EnsureTextObject("CollectedWater_Text", waterCard.transform, "Toplanan Su: 0/100", 13, TextAlignmentOptions.Right).transform;
         TMP_Text plantInventory = EnsureTextObject("PlantInventory_Text", plantCard.transform, "Bitkiler: -", 14, TextAlignmentOptions.TopLeft);
@@ -186,13 +186,13 @@ public static class GameHUDBuilderTool
         return text;
     }
 
-    private static Slider EnsureSliderObject(string name, Transform parent, Color fillColor)
+    private static Slider EnsureSliderObject(string name, Transform parent, Color fillColor, float initialValue)
     {
         GameObject existing = EnsureUIObject(name, parent, typeof(Slider));
         Slider slider = existing.GetComponent<Slider>();
         slider.minValue = 0f;
         slider.maxValue = 100f;
-        slider.value = 100f;
+        slider.value = Mathf.Clamp(initialValue, slider.minValue, slider.maxValue);
         slider.transition = Selectable.Transition.None;
 
         GameObject background = EnsureUIObject("Background", existing.transform, typeof(CanvasRenderer), typeof(Image));
@@ -207,7 +207,12 @@ public static class GameHUDBuilderTool
         fillAreaRect.offsetMax = new Vector2(-3f, -3f);
 
         GameObject fill = EnsureUIObject("Fill", fillArea.transform, typeof(CanvasRenderer), typeof(Image));
-        fill.GetComponent<Image>().color = fillColor;
+        Image fillImage = fill.GetComponent<Image>();
+        fillImage.color = fillColor;
+        fillImage.type = Image.Type.Filled;
+        fillImage.fillMethod = Image.FillMethod.Horizontal;
+        fillImage.fillOrigin = 0;
+        fillImage.fillAmount = slider.normalizedValue;
         Stretch(fill.GetComponent<RectTransform>());
 
         slider.fillRect = fill.GetComponent<RectTransform>();

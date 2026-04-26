@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 [System.Serializable]
 public class PlantCarryPrefab
@@ -12,19 +13,20 @@ public class PlantCarryPrefab
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : MonoBehaviour
 {
+    private const RigidbodyConstraints ControlledRigidbodyConstraints =
+        RigidbodyConstraints.FreezeRotationX |
+        RigidbodyConstraints.FreezeRotationY |
+        RigidbodyConstraints.FreezeRotationZ;
+
     [Header("Movement")]
-    [SerializeField] private float moveSpeed = 12f;
-    [SerializeField] private float jumpForce = 10f;
-    [SerializeField] private float fullWaterJumpMultiplier = 0.45f;
-    [SerializeField] private float jumpPenaltyStartWaterRatio = 0.45f;
-    [SerializeField] private float fallGravityMultiplier = 3.2f;
-    [SerializeField] private bool allowDepthMovement = true;
-    [SerializeField] private bool faceMoveDirection = true;
-    [SerializeField] private bool aimWithMouse = true;
-    [SerializeField] private float turnSpeed = 0f;
+    [SerializeField] private float moveSpeed = 8f;
+    [SerializeField] private float jumpForce = 7f;
+    [SerializeField] private float turnSpeed = 12f;
+    [SerializeField] private bool cameraRelativeMovement = true;
     [SerializeField] private Transform groundCheck;
     [SerializeField] private float groundCheckRadius = 0.25f;
     [SerializeField] private LayerMask groundLayer;
+    [SerializeField] private float groundRayDistance = 1.15f;
 
     [Header("Stats")]
     [SerializeField] private float maxHealth = 100f;
@@ -34,6 +36,8 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float requiredWaterForExit = 100f;
 
     [Header("Shooting")]
+    [SerializeField] private bool aimWithMouse = true;
+    [SerializeField] private float mouseAimDeadZone = 8f;
     [SerializeField] private Transform firePoint;
     [SerializeField] private WaterProjectile waterProjectilePrefab;
     [SerializeField] private WaterProjectile iceProjectilePrefab;
@@ -60,6 +64,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private List<PlantCarryPrefab> carriedPlantPrefabs = new List<PlantCarryPrefab>();
 
     private Rigidbody rb;
+    private Collider playerCollider;
     private Vector3 moveInput;
     private Vector3 aimDirection = Vector3.forward;
     private bool jumpRequested;
@@ -84,6 +89,8 @@ public class PlayerController : MonoBehaviour
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        playerCollider = GetComponent<Collider>();
+        rb.constraints = ControlledRigidbodyConstraints;
         iceShotsRemaining = 0;
     }
 
@@ -96,16 +103,17 @@ public class PlayerController : MonoBehaviour
     private void Update()
     {
         float horizontalInput = Input.GetAxisRaw("Horizontal");
-        float verticalInput = allowDepthMovement ? Input.GetAxisRaw("Vertical") : 0f;
-        moveInput = new Vector3(horizontalInput, 0f, verticalInput).normalized;
+        float verticalInput = Input.GetAxisRaw("Vertical");
+        moveInput = GetMovementDirection(horizontalInput, verticalInput);
 
         if (Input.GetKeyDown(KeyCode.Space))
         {
             jumpRequested = true;
         }
 
-        if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+        if (Input.GetMouseButtonDown(0) && !IsPointerOverBlockingUi())
         {
+            TurnToMouseNow();
             if (!TryPlantAtMousePosition())
             {
                 TryShoot();
@@ -114,6 +122,7 @@ public class PlayerController : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.LeftControl) || Input.GetKeyDown(KeyCode.RightControl))
         {
+            TurnToMouseNow();
             TryShoot();
         }
 
@@ -128,14 +137,9 @@ public class PlayerController : MonoBehaviour
         }
 
         RechargeUltimate();
-        UpdateAimDirection();
         UpdateCarriedPlantVisual();
 
-        if (aimWithMouse && aimDirection.sqrMagnitude > 0.001f)
-        {
-            RotateTowards(aimDirection);
-        }
-        else if (faceMoveDirection && moveInput.sqrMagnitude > 0.001f)
+        if (moveInput.sqrMagnitude > 0.001f)
         {
             RotateTowards(moveInput);
         }
@@ -143,18 +147,16 @@ public class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        rb.constraints = ControlledRigidbodyConstraints;
+        rb.angularVelocity = Vector3.zero;
+
         Vector3 velocity = moveInput * moveSpeed;
         velocity.y = rb.velocity.y;
         rb.velocity = velocity;
 
         if (jumpRequested && IsGrounded())
         {
-            rb.velocity = new Vector3(rb.velocity.x, GetCurrentJumpForce(), rb.velocity.z);
-        }
-
-        if (rb.velocity.y < 0f)
-        {
-            rb.AddForce(Physics.gravity * (fallGravityMultiplier - 1f), ForceMode.Acceleration);
+            rb.velocity = new Vector3(rb.velocity.x, jumpForce, rb.velocity.z);
         }
 
         jumpRequested = false;
@@ -288,58 +290,124 @@ public class PlayerController : MonoBehaviour
         WorldController.RefreshHud();
     }
 
-    private void UpdateAimDirection()
+    private void UpdateAimDirection(bool instant = false)
     {
-        if (!aimWithMouse || Camera.main == null)
+        Camera aimCamera = GetAimCamera();
+        if (!aimWithMouse || aimCamera == null)
         {
             aimDirection = transform.forward;
             return;
         }
 
-        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-        Plane aimPlane = new Plane(Vector3.up, transform.position);
-
+        Vector3 aimPivot = transform.position;
+        Ray ray = aimCamera.ScreenPointToRay(Input.mousePosition);
+        Plane aimPlane = new Plane(Vector3.up, aimPivot);
         if (aimPlane.Raycast(ray, out float distance))
         {
             Vector3 aimPoint = ray.GetPoint(distance);
-            Vector3 direction = aimPoint - transform.position;
+            Vector3 direction = aimPoint - aimPivot;
             direction.y = 0f;
 
             if (direction.sqrMagnitude > 0.001f)
             {
                 aimDirection = direction.normalized;
+                return;
             }
+        }
+
+        Vector3 playerScreenPosition = aimCamera.WorldToScreenPoint(aimPivot);
+        Vector2 screenDirection = (Vector2)Input.mousePosition - new Vector2(playerScreenPosition.x, playerScreenPosition.y);
+        if (screenDirection.sqrMagnitude >= mouseAimDeadZone * mouseAimDeadZone)
+        {
+            aimDirection = new Vector3(screenDirection.x, 0f, screenDirection.y).normalized;
         }
     }
 
-    private void RotateTowards(Vector3 direction)
+    private void TurnToMouseNow()
     {
-        Quaternion targetRotation = Quaternion.LookRotation(direction, Vector3.up);
-        if (turnSpeed <= 0f)
+        UpdateAimDirection(true);
+        RotateTowards(aimDirection, true);
+    }
+
+    private Camera GetAimCamera()
+    {
+        if (Camera.main != null)
         {
-            transform.rotation = targetRotation;
+            return Camera.main;
+        }
+
+        return FindFirstObjectByType<Camera>();
+    }
+
+    private Vector3 GetMovementDirection(float horizontalInput, float verticalInput)
+    {
+        Vector3 input = new Vector3(horizontalInput, 0f, verticalInput);
+        if (input.sqrMagnitude > 1f)
+        {
+            input.Normalize();
+        }
+
+        if (!cameraRelativeMovement || Camera.main == null)
+        {
+            return input;
+        }
+
+        Transform cameraTransform = Camera.main.transform;
+        Vector3 forward = cameraTransform.forward;
+        forward.y = 0f;
+        forward = forward.sqrMagnitude > 0.001f ? forward.normalized : Vector3.forward;
+
+        Vector3 right = cameraTransform.right;
+        right.y = 0f;
+        right = right.sqrMagnitude > 0.001f ? right.normalized : Vector3.right;
+
+        return (right * input.x + forward * input.z).normalized;
+    }
+
+    private void RotateTowards(Vector3 direction, bool instant = false)
+    {
+        direction.y = 0f;
+        if (direction.sqrMagnitude <= 0.001f)
+        {
             return;
         }
 
-        transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, turnSpeed * Time.deltaTime);
+        Quaternion targetRotation = Quaternion.LookRotation(direction, Vector3.up);
+        Quaternion nextRotation = instant || turnSpeed <= 0f
+            ? targetRotation
+            : Quaternion.Slerp(transform.rotation, targetRotation, turnSpeed * Time.deltaTime);
+
+        ApplyRotationAroundPivot(nextRotation);
+    }
+
+    private void ApplyRotationAroundPivot(Quaternion nextRotation)
+    {
+        if (rb != null)
+        {
+            rb.constraints = ControlledRigidbodyConstraints;
+            rb.angularVelocity = Vector3.zero;
+            rb.rotation = nextRotation;
+            transform.rotation = nextRotation;
+            return;
+        }
+
+        transform.rotation = nextRotation;
     }
 
     private bool IsGrounded()
     {
-        if (groundCheck == null)
+        if (groundCheck != null && Physics.Raycast(groundCheck.position + Vector3.up * 0.05f, Vector3.down, groundCheckRadius + 0.15f, ~0, QueryTriggerInteraction.Ignore))
         {
-            return Mathf.Abs(rb.velocity.y) < 0.05f;
+            return true;
         }
 
-        return Physics.CheckSphere(groundCheck.position, groundCheckRadius, groundLayer, QueryTriggerInteraction.Ignore);
-    }
+        Bounds bounds = playerCollider != null
+            ? playerCollider.bounds
+            : new Bounds(transform.position, new Vector3(0.8f, 2f, 0.8f));
 
-    private float GetCurrentJumpForce()
-    {
-        float waterRatio = maxWater > 0f ? Mathf.Clamp01(currentWater / maxWater) : 0f;
-        float penaltyRatio = Mathf.InverseLerp(jumpPenaltyStartWaterRatio, 1f, waterRatio);
-        float jumpMultiplier = Mathf.Lerp(1f, fullWaterJumpMultiplier, penaltyRatio);
-        return jumpForce * jumpMultiplier;
+        Vector3 rayOrigin = bounds.center;
+        float rayDistance = bounds.extents.y + Mathf.Max(0.15f, groundRayDistance * 0.25f);
+        return Physics.Raycast(rayOrigin, Vector3.down, rayDistance, ~0, QueryTriggerInteraction.Ignore);
     }
 
     private void TryInteract()
@@ -495,9 +563,29 @@ public class PlayerController : MonoBehaviour
         return string.IsNullOrWhiteSpace(plantId) ? string.Empty : plantId.Trim().ToLowerInvariant();
     }
 
-    private bool IsPointerOverUi()
+    private bool IsPointerOverBlockingUi()
     {
-        return EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+        if (EventSystem.current == null || !EventSystem.current.IsPointerOverGameObject())
+        {
+            return false;
+        }
+
+        List<RaycastResult> results = new List<RaycastResult>();
+        PointerEventData pointerData = new PointerEventData(EventSystem.current)
+        {
+            position = Input.mousePosition
+        };
+
+        EventSystem.current.RaycastAll(pointerData, results);
+        foreach (RaycastResult result in results)
+        {
+            if (result.gameObject.GetComponentInParent<Button>() != null)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void OnDrawGizmosSelected()

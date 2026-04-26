@@ -30,8 +30,8 @@ Transform:
   m_GameObject: {fileID: 5246990349451025770}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: -0.0067504, y: 1.09, z: 0.019143}
+  m_LocalScale: {x: 2.7580976, y: 2.7580976, z: 2.7580976}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 8557472864017053460}
@@ -158,6 +158,10 @@ MonoBehaviour:
   firePoint: {fileID: 8557472864017053460}
   projectilePrefab: {fileID: 1663279447045661621, guid: 5b3a8c681827ab6408bea47c56c72ead,
     type: 3}
+  moveAxis: 0
+  moveTowardNegativeZ: 1
+  shootOnlyWithinDistance: 35
+  useVisibleModelAsFireOrigin: 1
   enemyPrefab: {fileID: 0}
   spawnPoints: []
   spawnInterval: 2
@@ -226,7 +230,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 717c5cac117c8c5428ec18c24143a1d6,
         type: 3}
       propertyPath: m_LocalPosition.y
-      value: -1.041
+      value: -0.36
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 717c5cac117c8c5428ec18c24143a1d6,
         type: 3}

@@ -32,6 +32,7 @@ public class WaterProjectile : MonoBehaviour
 
     private Rigidbody rb;
     private GameObject source;
+    private bool hasHit;
 
     private void Awake()
     {
@@ -83,6 +84,21 @@ public class WaterProjectile : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
+        HandleHit(other);
+    }
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        HandleHit(collision.collider);
+    }
+
+    private void HandleHit(Collider other)
+    {
+        if (hasHit || other == null)
+        {
+            return;
+        }
+
         if (source != null && (other.gameObject == source || other.transform.IsChildOf(source.transform)))
         {
             return;
@@ -100,6 +116,7 @@ public class WaterProjectile : MonoBehaviour
 
                 if (plant != null)
                 {
+                    hasHit = true;
                     plant.ApplyWater();
                     Destroy(gameObject);
                     return;
@@ -109,6 +126,7 @@ public class WaterProjectile : MonoBehaviour
             EnemyController enemy = other.GetComponentInParent<EnemyController>();
             if (enemy != null && enemy.CanTakeDamage)
             {
+                hasHit = true;
                 enemy.TakeDamage(damage);
                 Destroy(gameObject);
             }
@@ -118,6 +136,7 @@ public class WaterProjectile : MonoBehaviour
             PlayerController player = other.GetComponentInParent<PlayerController>();
             if (player != null)
             {
+                hasHit = true;
                 player.TakeDamage(damage);
                 player.AddWater(waterGainOnPlayerHit);
                 Destroy(gameObject);
